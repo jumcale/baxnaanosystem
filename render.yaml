@@ -2,6 +2,7 @@ services:
   - type: web
     name: baxnaano-staging
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
