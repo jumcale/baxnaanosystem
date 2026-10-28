@@ -43,10 +43,15 @@ export function normalizePaymentToUsd(
 }
 
 export const SaleCartItemInputSchema = z.object({
-  id: z.string().uuid().optional(),
-  productId: z.string().uuid(),
+  id: z.string().min(1).optional(),
+  productId: z.string().min(1),
+  productName: z.string().optional().nullable(),
+  sku: z.string().optional().nullable(),
   /** Optional explicit batchId; if omitted, server/client auto-allocates via FEFO */
-  batchId: z.string().uuid().optional(),
+  batchId: z.string().min(1).optional(),
+  batchNumber: z.string().optional().nullable(),
+  expiryDate: z.string().optional().nullable(),
+  unitBuyPriceUsd: z.coerce.number().nonnegative().optional(),
   quantity: z.coerce.number().int().positive(),
   unitPriceUsd: z.coerce.number().positive(),
   discountUsd: z.coerce.number().nonnegative().default(0),
@@ -54,7 +59,7 @@ export const SaleCartItemInputSchema = z.object({
 });
 
 export const SalePaymentInputSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().min(1).optional(),
   method: z.enum(PAYMENT_METHODS),
   currency: z.enum(CURRENCIES).default('USD'),
   amountOriginal: z.coerce.number().positive(),
@@ -63,15 +68,17 @@ export const SalePaymentInputSchema = z.object({
 });
 
 export const CreateSaleSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().min(1).optional(),
   branchId: z.string().min(1),
   receiptNumber: z.string().min(3).max(60).optional(),
-  customerId: z.string().uuid().optional().nullable(),
+  customerId: z.string().min(1).optional().nullable(),
+  customerName: z.string().optional().nullable(),
+  customerPhone: z.string().optional().nullable(),
   currency: z.enum(CURRENCIES).default('USD'),
   exchangeRateUsed: z.coerce.number().positive(),
   discountUsd: z.coerce.number().nonnegative().default(0),
   taxUsd: z.coerce.number().nonnegative().default(0),
-  approvedById: z.string().uuid().optional().nullable(),
+  approvedById: z.string().min(1).optional().nullable(),
   prescriptionRef: z.string().max(120).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
   dueDate: z.string().optional().nullable(), // If credit payment is included
