@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #baxnaano-thermal-receipt,
+  #baxnaano-thermal-receipt * {
+    visibility: visible;
+  }
+  #baxnaano-thermal-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: none !important;
+    box-shadow: none !important;
+  }
+}

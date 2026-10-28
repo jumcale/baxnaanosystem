@@ -1,0 +1,833 @@
+// ============================================================================
+// BAXNAANO PHARMACY & VETERINARY CLINIC MANAGEMENT SYSTEM
+// Complete Prisma Schema (Multi-Branch, Offline-First, Ledger-Based Stock)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// ENUMS
+// ----------------------------------------------------------------------------
+
+enum BranchType {
+  PHARMACY
+  VETERINARY
+}
+
+enum RoleName {
+  ADMIN
+  BRANCH_MANAGER
+  CASHIER
+  PHARMACIST
+  VET_OFFICER
+}
+
+enum Species {
+  HUMAN
+  CAMEL
+  CATTLE
+  SHEEP
+  GOAT
+  POULTRY
+  OTHER
+}
+
+enum StockMovementType {
+  INITIAL_STOCK
+  PURCHASE
+  SALE
+  VOID_REVERSAL
+  REFUND_RETURN
+  ADJUSTMENT_PLUS
+  ADJUSTMENT_MINUS
+  DAMAGE_EXPIRED
+  TRANSFER_OUT
+  TRANSFER_IN
+  STOCK_TAKE_VARIANCE
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  EVC_PLUS
+  ZAAD
+  EDAHAB
+  CREDIT
+}
+
+enum Currency {
+  USD
+  SLSH
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  CONVERTED
+  EXPIRED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AppointmentStatus {
+  BOOKED
+  DONE
+  CANCELLED
+  NO_SHOW
+}
+
+enum VisitType {
+  CLINIC_VISIT
+  FARM_VISIT
+  CONSULTATION
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CreditTransactionType {
+  CHARGE
+  PAYMENT
+  ADJUSTMENT
+  VOID_REVERSAL
+}
+
+enum SyncStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CONFLICT
+  FAILED
+}
+
+// ----------------------------------------------------------------------------
+// 1. CORE & RBAC (Branch, Role, User, RefreshToken, BranchSettings)
+// ----------------------------------------------------------------------------
+
+model Branch {
+  id            String      @id @default(uuid()) // Supports fixed codes 'B1', 'B2', 'B3' or UUIDs
+  code          String      @unique              // 'B1', 'B2', 'B3'
+  name          String
+  type          BranchType
+  location      String
+  phone         String?
+  address       String?
+  exchangeRate  Decimal     @default(8500.00) @db.Decimal(12, 2) // 1 USD to SLSH
+  taxRate       Decimal     @default(0.00) @db.Decimal(5, 2)
+  receiptHeader String?
+  receiptFooter String?
+  defaultLang   String      @default("en") // 'en' (Primary) or 'so' (Secondary)
+  isActive      Boolean     @default(true)
+  version       Int         @default(1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+
+  users              User[]
+  categories         Category[]
+  units              Unit[]
+  products           Product[]
+  batches            ProductBatch[]
+  stockMovements     StockMovement[]
+  transfersOut       StockTransfer[] @relation("SourceBranch")
+  transfersIn        StockTransfer[] @relation("DestinationBranch")
+  suppliers          Supplier[]
+  purchases          Purchase[]
+  customers          Customer[]
+  sales              Sale[]
+  payments           Payment[]
+  quotations         Quotation[]
+  expenses           Expense[]
+  appointments       Appointment[]
+  tasks              Task[]
+  creditLedgers      CreditLedger[]
+  auditLogs          AuditLog[]
+  syncQueues         SyncQueue[]
+
+  @@index([code])
+}
+
+model Role {
+  id          String    @id @default(uuid())
+  name        RoleName  @unique
+  description String
+  permissions Json      // Array of permission strings e.g. ["sales:create", "inventory:write"]
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  users       User[]
+}
+
+model User {
+  id           String    @id @default(uuid())
+  branchId     String?   // Null allowed ONLY for global ADMIN
+  roleId       String
+  username     String    @unique
+  email        String?   @unique
+  fullName     String
+  phone        String?
+  passwordHash String
+  pinHash      String?   // Optional fast offline POS unlock PIN
+  language     String    @default("en")
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  version      Int       @default(1)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  branch            Branch?          @relation(fields: [branchId], references: [id])
+  role              Role             @relation(fields: [roleId], references: [id])
+  refreshTokens     RefreshToken[]
+  salesCashier      Sale[]           @relation("CashierSales")
+  salesApprovedBy   Sale[]           @relation("ApprovedSales")
+  expensesCreated   Expense[]        @relation("ExpenseCreator")
+  expensesApproved  Expense[]        @relation("ExpenseApprover")
+  appointmentsStaff Appointment[]    @relation("AssignedProvider")
+  tasksAssigned     Task[]           @relation("TaskAssignee")
+  tasksCreated      Task[]           @relation("TaskCreator")
+  stockMovements    StockMovement[]
+  auditLogs         AuditLog[]
+
+  @@index([branchId])
+  @@index([roleId])
+  @@index([username])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  deviceId  String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// ----------------------------------------------------------------------------
+// 2. INVENTORY (Category, Unit, Product, ProductBatch, StockMovement, Transfer)
+// ----------------------------------------------------------------------------
+
+model Category {
+  id          String    @id @default(uuid())
+  branchId    String
+  name        String
+  nameSo      String?
+  description String?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  branch      Branch    @relation(fields: [branchId], references: [id])
+  products    Product[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+model Unit {
+  id           String    @id @default(uuid())
+  branchId     String
+  name         String    // e.g., Tablet, Vial, Bottle, Strip, Box, Bolus, Dose
+  abbreviation String    // e.g., tab, vial, btl
+  version      Int       @default(1)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  branch       Branch    @relation(fields: [branchId], references: [id])
+  products     Product[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+model Product {
+  id                   String     @id @default(uuid())
+  branchId             String
+  categoryId           String
+  unitId               String
+  sku                  String
+  barcode              String?
+  name                 String
+  description          String?
+  buyPriceUsd          Decimal    @db.Decimal(12, 4)
+  sellPriceUsd         Decimal    @db.Decimal(12, 4)
+  reorderLevel         Int        @default(10)
+
+  // Pharmacy Specific Fields (Human Health - B1)
+  genericName          String?
+  dosageForm           String?    // Tablet, Syrup, Injection, Capsule, Ointment
+  strength             String?    // e.g., 500mg, 250mg/5ml
+  isPrescriptionOnly   Boolean    @default(false)
+
+  // Veterinary Specific Fields (Livestock Health - B2, B3)
+  targetSpecies        Species[]  // CAMEL, CATTLE, SHEEP, GOAT, POULTRY
+  dosePerKg            String?    // e.g., "1ml per 10kg" or "10mg/kg"
+  withdrawalPeriodDays Int?       // Meat/milk withdrawal days
+  isColdChainRequired  Boolean    @default(false) // Vaccines & temperature-sensitive meds
+
+  isActive             Boolean    @default(true)
+  version              Int        @default(1)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  deletedAt            DateTime?
+
+  branch               Branch           @relation(fields: [branchId], references: [id])
+  category             Category         @relation(fields: [categoryId], references: [id])
+  unit                 Unit             @relation(fields: [unitId], references: [id])
+  batches              ProductBatch[]
+  stockMovements       StockMovement[]
+  saleItems            SaleItem[]
+  quotationItems       QuotationItem[]
+
+  @@unique([branchId, sku])
+  @@index([branchId, barcode])
+  @@index([branchId, name])
+  @@index([branchId, categoryId])
+}
+
+model ProductBatch {
+  id                String    @id @default(uuid())
+  branchId          String
+  productId         String
+  batchNumber       String
+  expiryDate        DateTime
+  buyPriceUsd       Decimal   @db.Decimal(12, 4)
+  sellPriceUsd      Decimal   @db.Decimal(12, 4)
+  cachedQuantity    Int       @default(0) // Materialized sum of StockMovements for fast query; source of truth is StockMovement sum
+  manufacturingDate DateTime?
+  supplierId        String?
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  branch            Branch          @relation(fields: [branchId], references: [id])
+  product           Product         @relation(fields: [productId], references: [id])
+  supplier          Supplier?       @relation(fields: [supplierId], references: [id])
+  stockMovements    StockMovement[]
+  saleItems         SaleItem[]
+
+  @@unique([branchId, productId, batchNumber])
+  @@index([branchId, expiryDate])
+  @@index([branchId, productId])
+}
+
+// Ledger-based stock movements: Stock is NEVER overwritten; it is always the sum of quantityDelta
+model StockMovement {
+  id            String            @id @default(uuid())
+  branchId      String
+  productId     String
+  batchId       String
+  userId        String
+  type          StockMovementType
+  quantityDelta Int               // Positive for additions, Negative for deductions
+  unitCostUsd   Decimal?          @db.Decimal(12, 4)
+  referenceId   String?           // Sale ID, Purchase ID, Transfer ID, or StockTake ID
+  referenceType String?           // "SALE", "PURCHASE", "TRANSFER", "ADJUSTMENT", "STOCK_TAKE"
+  reason        String?
+  version       Int               @default(1)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  deletedAt     DateTime?
+
+  branch        Branch            @relation(fields: [branchId], references: [id])
+  product       Product           @relation(fields: [productId], references: [id])
+  batch         ProductBatch      @relation(fields: [batchId], references: [id])
+  user          User              @relation(fields: [userId], references: [id])
+
+  @@index([branchId, productId])
+  @@index([branchId, batchId])
+  @@index([branchId, createdAt])
+  @@index([referenceId])
+}
+
+model StockTransfer {
+  id                  String         @id @default(uuid())
+  branchId            String         // Source branch ID (for standard scoping)
+  destinationBranchId String         // Receiving branch ID
+  transferNumber      String         @unique
+  status              TransferStatus @default(PENDING)
+  items               Json           // Array of { productId, sku, batchNumber, expiryDate, quantity, buyPriceUsd, sellPriceUsd }
+  notes               String?
+  initiatedById       String
+  receivedById        String?
+  dispatchedAt        DateTime?
+  completedAt         DateTime?
+  version             Int            @default(1)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  deletedAt           DateTime?
+
+  sourceBranch        Branch         @relation("SourceBranch", fields: [branchId], references: [id])
+  destinationBranch   Branch         @relation("DestinationBranch", fields: [destinationBranchId], references: [id])
+
+  @@index([branchId])
+  @@index([destinationBranchId])
+  @@index([status])
+}
+
+// ----------------------------------------------------------------------------
+// 3. SUPPLIERS & PURCHASES
+// ----------------------------------------------------------------------------
+
+model Supplier {
+  id            String         @id @default(uuid())
+  branchId      String
+  name          String
+  contactPerson String?
+  phone         String
+  email         String?
+  address       String?
+  balanceUsd    Decimal        @default(0.00) @db.Decimal(12, 2)
+  version       Int            @default(1)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+
+  branch        Branch         @relation(fields: [branchId], references: [id])
+  purchases     Purchase[]
+  batches       ProductBatch[]
+
+  @@index([branchId, name])
+}
+
+model Purchase {
+  id             String    @id @default(uuid())
+  branchId       String
+  supplierId     String
+  invoiceNumber  String
+  purchaseDate   DateTime  @default(now())
+  totalAmountUsd Decimal   @db.Decimal(12, 2)
+  paidAmountUsd  Decimal   @default(0.00) @db.Decimal(12, 2)
+  items          Json      // Array of { productId, batchId, batchNumber, expiryDate, quantity, buyPriceUsd, sellPriceUsd }
+  notes          String?
+  receivedById   String
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  branch         Branch    @relation(fields: [branchId], references: [id])
+  supplier       Supplier  @relation(fields: [supplierId], references: [id])
+
+  @@index([branchId, purchaseDate])
+  @@index([branchId, supplierId])
+}
+
+// ----------------------------------------------------------------------------
+// 4. CUSTOMERS, SALES, PAYMENTS, QUOTATIONS, CREDIT LEDGER
+// ----------------------------------------------------------------------------
+
+model Customer {
+  id                String         @id @default(uuid())
+  branchId          String
+  name              String
+  phone             String
+  address           String?
+  villageOrFarm     String?        // Important for Vet livestock owners (Arabsiyo / Gabiley villages)
+  primarySpecies    Species[]      // For livestock owners: Herd species profile
+  herdSizeEstimate  Int?
+  creditLimitUsd    Decimal        @default(100.00) @db.Decimal(12, 2)
+  currentBalanceUsd Decimal        @default(0.00) @db.Decimal(12, 2) // Positive = owes money
+  isActive          Boolean        @default(true)
+  version           Int            @default(1)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  deletedAt         DateTime?
+
+  branch            Branch         @relation(fields: [branchId], references: [id])
+  sales             Sale[]
+  quotations        Quotation[]
+  appointments      Appointment[]
+  creditEntries     CreditLedger[]
+
+  @@index([branchId, phone])
+  @@index([branchId, name])
+}
+
+model Sale {
+  id                 String     @id @default(uuid())
+  branchId           String
+  receiptNumber      String
+  cashierId          String
+  customerId         String?
+  status             SaleStatus @default(COMPLETED)
+  currency           Currency   @default(USD)
+  exchangeRateUsed   Decimal    @db.Decimal(12, 2) // Rate at moment of sale
+  subtotalUsd        Decimal    @db.Decimal(12, 2)
+  discountUsd        Decimal    @default(0.00) @db.Decimal(12, 2)
+  taxUsd             Decimal    @default(0.00) @db.Decimal(12, 2)
+  totalUsd           Decimal    @db.Decimal(12, 2)
+  totalSlsh          Decimal    @db.Decimal(16, 2)
+  paidUsd            Decimal    @db.Decimal(12, 2)
+  creditAmountUsd    Decimal    @default(0.00) @db.Decimal(12, 2)
+  changeUsd          Decimal    @default(0.00) @db.Decimal(12, 2)
+
+  // Discount / Void / Refund governance
+  approvedById       String?
+  voidOrRefundReason String?
+  voidedAt           DateTime?
+
+  // Clinical / Vet notes linked to sale
+  prescriptionRef    String?
+  notes              String?
+  soldAt             DateTime   @default(now())
+  version            Int        @default(1)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  deletedAt          DateTime?
+
+  branch             Branch         @relation(fields: [branchId], references: [id])
+  cashier            User           @relation("CashierSales", fields: [cashierId], references: [id])
+  approvedBy         User?          @relation("ApprovedSales", fields: [approvedById], references: [id])
+  customer           Customer?      @relation(fields: [customerId], references: [id])
+  items              SaleItem[]
+  payments           Payment[]
+  creditEntries      CreditLedger[]
+
+  @@unique([branchId, receiptNumber])
+  @@index([branchId, soldAt])
+  @@index([branchId, cashierId])
+  @@index([branchId, customerId])
+  @@index([branchId, status])
+}
+
+model SaleItem {
+  id               String       @id @default(uuid())
+  branchId         String
+  saleId           String
+  productId        String
+  batchId          String
+  quantity         Int
+  refundedQuantity Int          @default(0)
+  unitBuyPriceUsd  Decimal      @db.Decimal(12, 4) // Captured for accurate Profit calculation
+  unitPriceUsd     Decimal      @db.Decimal(12, 4)
+  discountUsd      Decimal      @default(0.00) @db.Decimal(12, 4)
+  subtotalUsd      Decimal      @db.Decimal(12, 2)
+  dosageNote       String?      // Dose / withdrawal instructions printed on label/receipt
+  version          Int          @default(1)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
+
+  sale             Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product          Product      @relation(fields: [productId], references: [id])
+  batch            ProductBatch @relation(fields: [batchId], references: [id])
+
+  @@index([branchId, saleId])
+  @@index([branchId, productId])
+}
+
+model Payment {
+  id               String        @id @default(uuid())
+  branchId         String
+  saleId           String?       // Nullable if payment is a standalone credit repayment
+  creditLedgerId   String?
+  method           PaymentMethod // CASH, EVC_PLUS, ZAAD, EDAHAB, CREDIT
+  currency         Currency      @default(USD)
+  amountOriginal   Decimal       @db.Decimal(16, 2) // Amount in USD or SLSH paid
+  amountUsd        Decimal       @db.Decimal(12, 2) // Normalized to USD for accounting
+  exchangeRateUsed Decimal       @db.Decimal(12, 2)
+  referencePhone   String?       // Mobile money sender phone or transaction ref
+  transactionRef   String?
+  paidAt           DateTime      @default(now())
+  version          Int           @default(1)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  branch           Branch        @relation(fields: [branchId], references: [id])
+  sale             Sale?         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, paidAt])
+  @@index([branchId, method])
+  @@index([saleId])
+}
+
+model Quotation {
+  id               String          @id @default(uuid())
+  branchId         String
+  quotationNumber  String
+  customerId       String?
+  customerName     String?
+  customerPhone    String?
+  status           QuotationStatus @default(DRAFT)
+  currency         Currency        @default(USD)
+  exchangeRateUsed Decimal         @db.Decimal(12, 2)
+  subtotalUsd      Decimal         @db.Decimal(12, 2)
+  discountUsd      Decimal         @default(0.00) @db.Decimal(12, 2)
+  totalUsd         Decimal         @db.Decimal(12, 2)
+  totalSlsh        Decimal         @db.Decimal(16, 2)
+  validUntil       DateTime
+  convertedSaleId  String?
+  notes            String?
+  createdById      String
+  version          Int             @default(1)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deletedAt        DateTime?
+
+  branch           Branch          @relation(fields: [branchId], references: [id])
+  customer         Customer?       @relation(fields: [customerId], references: [id])
+  items            QuotationItem[]
+
+  @@unique([branchId, quotationNumber])
+  @@index([branchId, status])
+  @@index([branchId, validUntil])
+}
+
+model QuotationItem {
+  id           String    @id @default(uuid())
+  branchId     String
+  quotationId  String
+  productId    String
+  quantity     Int
+  unitPriceUsd Decimal   @db.Decimal(12, 4)
+  discountUsd  Decimal   @default(0.00) @db.Decimal(12, 4)
+  subtotalUsd  Decimal   @db.Decimal(12, 2)
+  version      Int       @default(1)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  quotation    Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product      Product   @relation(fields: [productId], references: [id])
+
+  @@index([quotationId])
+}
+
+model CreditLedger {
+  id             String                @id @default(uuid())
+  branchId       String
+  customerId     String
+  saleId         String?
+  type           CreditTransactionType // CHARGE, PAYMENT, ADJUSTMENT, VOID_REVERSAL
+  amountDeltaUsd Decimal               @db.Decimal(12, 2) // +ve increases debt, -ve reduces debt
+  balanceAfterUsd Decimal              @db.Decimal(12, 2)
+  dueDate        DateTime?             // For aging buckets (0-30, 31-60, 60+ days)
+  isSettled      Boolean               @default(false)
+  paymentMethod  PaymentMethod?        // If type == PAYMENT
+  notes          String?
+  recordedById   String
+  version        Int                   @default(1)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  deletedAt      DateTime?
+
+  branch         Branch                @relation(fields: [branchId], references: [id])
+  customer       Customer              @relation(fields: [customerId], references: [id])
+  sale           Sale?                 @relation(fields: [saleId], references: [id])
+
+  @@index([branchId, customerId])
+  @@index([branchId, dueDate])
+  @@index([branchId, createdAt])
+}
+
+// ----------------------------------------------------------------------------
+// 5. EXPENSES
+// ----------------------------------------------------------------------------
+
+model Expense {
+  id                 String         @id @default(uuid())
+  branchId           String
+  category           String         // Rent, Utilities, Fuel/Field Transport, Cold Chain Ice/Power, Salaries, Supplies
+  amountUsd          Decimal        @db.Decimal(12, 2)
+  currencyPaid       Currency       @default(USD)
+  amountOriginal     Decimal        @db.Decimal(16, 2)
+  exchangeRateUsed   Decimal        @db.Decimal(12, 2)
+  paymentMethod      PaymentMethod  @default(CASH)
+  payee              String
+  description        String?
+  receiptPhotoData   String?        // Base64 or local/cloud URL for offline-first photo capture
+  approvalStatus     ApprovalStatus @default(PENDING)
+  isRecurring        Boolean        @default(false)
+  recurringFrequency String?        // "DAILY", "WEEKLY", "MONTHLY"
+  nextDueDate        DateTime?
+  createdById        String
+  approvedById       String?
+  approvedAt         DateTime?
+  expenseDate        DateTime       @default(now())
+  version            Int            @default(1)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  deletedAt          DateTime?
+
+  branch             Branch         @relation(fields: [branchId], references: [id])
+  createdBy          User           @relation("ExpenseCreator", fields: [createdById], references: [id])
+  approvedBy         User?          @relation("ExpenseApprover", fields: [approvedById], references: [id])
+
+  @@index([branchId, expenseDate])
+  @@index([branchId, approvalStatus])
+  @@index([branchId, category])
+}
+
+// ----------------------------------------------------------------------------
+// 6. APPOINTMENTS & TASKS (Pharmacy Consultations & Vet Herd/Farm Visits)
+// ----------------------------------------------------------------------------
+
+model Appointment {
+  id               String            @id @default(uuid())
+  branchId         String
+  customerId       String?
+  assignedStaffId  String?
+  patientOrOwner   String            // Human patient name (B1) or Livestock owner name (B2/B3)
+  phone            String
+  status           AppointmentStatus @default(BOOKED)
+  visitType        VisitType         @default(CLINIC_VISIT)
+  scheduledAt      DateTime
+
+  // Pharmacy Specific (B1)
+  patientAge       Int?
+  patientGender    String?
+  symptoms         String?
+
+  // Veterinary Specific (B2 / B3)
+  species          Species?          // CAMEL, CATTLE, SHEEP, GOAT, POULTRY
+  animalCount      Int?              // Herd/flock count treated or inspected
+  villageOrFarm    String?           // Location for field visits around Arabsiyo / Gabiley
+
+  // Shared Clinical Notes
+  diagnosis        String?
+  treatmentNotes   String?
+  prescriptionText String?
+  followUpDate     DateTime?
+  reminderSent     Boolean           @default(false)
+
+  version          Int               @default(1)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deletedAt        DateTime?
+
+  branch           Branch            @relation(fields: [branchId], references: [id])
+  customer         Customer?         @relation(fields: [customerId], references: [id])
+  assignedStaff    User?             @relation("AssignedProvider", fields: [assignedStaffId], references: [id])
+
+  @@index([branchId, scheduledAt])
+  @@index([branchId, status])
+  @@index([branchId, followUpDate])
+}
+
+model Task {
+  id              String       @id @default(uuid())
+  branchId        String
+  title           String
+  description     String?
+  assignedToId    String?
+  createdById     String
+  status          TaskStatus   @default(OPEN)
+  priority        TaskPriority @default(MEDIUM)
+  dueDate         DateTime?
+  completedAt     DateTime?
+  relatedEntityId String?      // Optional link to Appointment, Batch, or Customer
+  version         Int          @default(1)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  branch          Branch       @relation(fields: [branchId], references: [id])
+  assignedTo      User?        @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  createdBy       User         @relation("TaskCreator", fields: [createdById], references: [id])
+
+  @@index([branchId, status])
+  @@index([branchId, assignedToId])
+  @@index([branchId, dueDate])
+}
+
+// ----------------------------------------------------------------------------
+// 7. AUDIT LOG & OFFLINE SYNC QUEUE
+// ----------------------------------------------------------------------------
+
+model AuditLog {
+  id         String    @id @default(uuid())
+  branchId   String?
+  userId     String?
+  action     String    // e.g. "AUTH_LOGIN", "SALE_VOID", "PRICE_EDIT", "STOCK_ADJUST", "EXPENSE_APPROVE"
+  entityType String    // e.g. "Sale", "Product", "StockMovement", "User"
+  entityId   String
+  oldData    Json?
+  newData    Json?
+  reason     String?
+  ipAddress  String?
+  userAgent  String?
+  version    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  branch     Branch?   @relation(fields: [branchId], references: [id])
+  user       User?     @relation(fields: [userId], references: [id])
+
+  @@index([branchId, createdAt])
+  @@index([action])
+  @@index([entityType, entityId])
+}
+
+model SyncQueue {
+  id             String     @id @default(uuid())
+  branchId       String
+  clientDeviceId String
+  userId         String
+  entityType     String     // Table/Model name
+  entityId       String     // Client-generated UUID
+  operation      String     // "CREATE", "UPDATE", "DELETE", "LEDGER_APPEND"
+  payload        Json
+  baseVersion    Int        @default(1)
+  status         SyncStatus @default(PENDING)
+  retryCount     Int        @default(0)
+  errorMessage   String?
+  syncedAt       DateTime?
+  version        Int        @default(1)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deletedAt      DateTime?
+
+  branch         Branch     @relation(fields: [branchId], references: [id])
+
+  @@index([branchId, status])
+  @@index([entityId, entityType])
+}
