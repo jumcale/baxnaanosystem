@@ -63,6 +63,8 @@ export const SalesPointPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId, setActiveBranchId } = useAuth();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const productsTopRef = useRef<HTMLDivElement>(null);
+  const cartSectionRef = useRef<HTMLFormElement>(null);
 
   const initialBranchSettings = getSavedBranchSettingsSync(activeBranchId);
 
@@ -382,8 +384,24 @@ export const SalesPointPage: React.FC = () => {
     searchInputRef.current?.focus();
   };
 
+  const cartItemCount = useMemo(
+    () => cart.reduce((sum, item) => sum + item.quantity, 0),
+    [cart]
+  );
+
+  const scrollToCartSection = () => {
+    cartSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const scrollToProductsTop = () => {
+    productsTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6">
+    <div
+      ref={productsTopRef}
+      className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 pb-28 md:p-6 lg:pb-6"
+    >
       {user?.role === 'ADMIN' && activeBranchId === 'ALL' && (
         <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="font-semibold text-amber-900 dark:text-amber-200">
@@ -413,6 +431,32 @@ export const SalesPointPage: React.FC = () => {
         </div>
       )}
 
+      {/* Mobile Quick Jump Bar (Products vs Cart & Checkout) */}
+      <div className="lg:hidden mb-4 grid grid-cols-2 gap-2 bg-white dark:bg-slate-800 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+        <button
+          type="button"
+          onClick={scrollToProductsTop}
+          className="py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-[0.99]"
+        >
+          <Search className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Products ({filteredProducts.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={scrollToCartSection}
+          className={`py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-[0.99] ${
+            cartItemCount > 0
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+          }`}
+        >
+          <ShoppingCart className="w-3.5 h-3.5" />
+          <span>
+            {t('pos.cart_title')} ({cartItemCount}) • ${totalUsd.toFixed(2)}
+          </span>
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* LEFT COLUMN (7 cols): Fast Search, Barcode Input & Product Touch Grid */}
         <div className="lg:col-span-7 space-y-4">
@@ -437,8 +481,8 @@ export const SalesPointPage: React.FC = () => {
               <NumericInput
                 min={1}
                 step="any"
-                placeholder="8500"
-                fallbackOnBlur={8500}
+                placeholder="10000"
+                fallbackOnBlur={10000}
                 value={exchangeRate}
                 onChange={handleExchangeRateChange}
                 className="w-24 font-bold text-sm bg-transparent border-b border-emerald-500 focus:outline-none text-center"
@@ -447,8 +491,8 @@ export const SalesPointPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Product Touch Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[72vh] overflow-y-auto pr-1">
+          {/* Product Touch Cards — Natural page scroll on mobile, inner scroll on lg+ desktop */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:max-h-[72vh] lg:overflow-y-auto lg:pr-1">
             {filteredProducts.map((p) => {
               const isOut = p.sellableStock <= 0;
               return (
@@ -517,15 +561,23 @@ export const SalesPointPage: React.FC = () => {
 
         {/* RIGHT COLUMN (5 cols): Cart, Customer, Split Payments & Checkout */}
         <form
+          ref={cartSectionRef}
           onSubmit={handleCheckout}
-          className="lg:col-span-5 bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col justify-between space-y-4"
+          className="scroll-mt-24 lg:col-span-5 bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col justify-between space-y-4"
         >
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b dark:border-slate-700 pb-3">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-emerald-600" />
-                {t('pos.cart_title')} ({cart.reduce((s, i) => s + i.quantity, 0)})
+                {t('pos.cart_title')} ({cartItemCount})
               </h2>
+              <button
+                type="button"
+                onClick={scrollToProductsTop}
+                className="lg:hidden px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-xs font-bold text-emerald-700 dark:text-emerald-300"
+              >
+                ↑ Products
+              </button>
             </div>
 
             {/* Customer Selector */}
@@ -549,8 +601,8 @@ export const SalesPointPage: React.FC = () => {
               </select>
             </div>
 
-            {/* Cart Items List */}
-            <div className="space-y-2.5 max-h-[30vh] overflow-y-auto pr-1">
+            {/* Cart Items List — Natural page scroll on mobile, inner scroll on lg+ desktop */}
+            <div className="space-y-2.5 lg:max-h-[35vh] lg:overflow-y-auto lg:pr-1">
               {cart.length === 0 ? (
                 <div className="text-center py-8 text-sm text-slate-400">
                   {t('pos.empty_cart')}
@@ -744,6 +796,33 @@ export const SalesPointPage: React.FC = () => {
           </button>
         </form>
       </div>
+
+      {/* Sticky Floating Mobile Cart Bar for Instant Access to Checkout */}
+      {cartItemCount > 0 && (
+        <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 p-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-slate-200 dark:border-slate-800 shadow-2xl">
+          <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                {cartItemCount} {cartItemCount === 1 ? 'item' : 'items'} in cart
+              </div>
+              <div className="text-base font-extrabold text-emerald-700 dark:text-emerald-400 truncate">
+                ${totalUsd.toFixed(2)}{' '}
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  ({totalSlsh.toLocaleString()} SLSH)
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={scrollToCartSection}
+              className="px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md flex items-center gap-2 shrink-0 active:scale-[0.98]"
+            >
+              <ShoppingCart className="w-4 h-4" />
+              <span>View Cart & Checkout ↓</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Thermal 58mm / 80mm & PDF Receipt Preview Modal */}
       {completedReceipt && (

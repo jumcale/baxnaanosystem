@@ -406,7 +406,7 @@ export const AppShellLayout: React.FC = () => {
         </header>
 
         {/* Main Page Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1">
           <Outlet />
         </main>
       </div>
