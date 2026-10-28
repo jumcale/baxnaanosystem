@@ -20,7 +20,7 @@ function getStorageKey(branchId: string): string {
 export function getSavedBranchSettingsSync(branchId: string): BranchSettingsConfig {
   const defaultConfig: BranchSettingsConfig = {
     branchId,
-    exchangeRate: 8500,
+    exchangeRate: 10000,
     taxRate: 0,
     receiptHeader: 'Baxnaano Pharmacy & Veterinary Clinic',
     receiptFooter: 'Thank you for choosing Baxnaano! / Mahadsanid!',
@@ -34,7 +34,7 @@ export function getSavedBranchSettingsSync(branchId: string): BranchSettingsConf
       const parsed = JSON.parse(specificRaw);
       return {
         branchId,
-        exchangeRate: Number(parsed.exchangeRate) > 0 ? Number(parsed.exchangeRate) : 8500,
+        exchangeRate: Number(parsed.exchangeRate) > 0 ? Number(parsed.exchangeRate) : 10000,
         taxRate: Number(parsed.taxRate) >= 0 ? Number(parsed.taxRate) : 0,
         receiptHeader: parsed.receiptHeader ?? defaultConfig.receiptHeader,
         receiptFooter: parsed.receiptFooter ?? defaultConfig.receiptFooter,
@@ -46,7 +46,7 @@ export function getSavedBranchSettingsSync(branchId: string): BranchSettingsConf
       const parsed = JSON.parse(globalRaw);
       return {
         branchId,
-        exchangeRate: Number(parsed.exchangeRate) > 0 ? Number(parsed.exchangeRate) : 8500,
+        exchangeRate: Number(parsed.exchangeRate) > 0 ? Number(parsed.exchangeRate) : 10000,
         taxRate: Number(parsed.taxRate) >= 0 ? Number(parsed.taxRate) : 0,
         receiptHeader: parsed.receiptHeader ?? defaultConfig.receiptHeader,
         receiptFooter: parsed.receiptFooter ?? defaultConfig.receiptFooter,
