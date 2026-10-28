@@ -60,8 +60,8 @@ export const LoginPage: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('Password123!');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,28 +156,6 @@ export const LoginPage: React.FC = () => {
             {t('auth.sign_in')}
           </button>
         </form>
-
-        {/* Quick Role Switcher Buttons for Testing RBAC & Branch Isolation */}
-        <div className="pt-4 border-t border-slate-700 space-y-2">
-          <div className="text-[11px] text-slate-400 font-semibold">
-            Quick Role Accounts (Password: Password123!):
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {Object.keys(OFFLINE_DEMO_PROFILES).map((uKey) => (
-              <button
-                key={uKey}
-                type="button"
-                onClick={() => {
-                  setUsername(uKey);
-                  setPassword('Password123!');
-                }}
-                className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 font-mono"
-              >
-                {uKey}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
