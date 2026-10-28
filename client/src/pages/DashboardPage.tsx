@@ -31,7 +31,12 @@ export const DashboardPage: React.FC = () => {
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
 
   useEffect(() => {
-    computeOfflineDashboardAnalytics(activeBranchId).then(setAnalytics);
+    const refresh = () => {
+      computeOfflineDashboardAnalytics(activeBranchId).then(setAnalytics);
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   if (!analytics) {

@@ -1,5 +1,6 @@
+import { v4 as uuidv4 } from 'uuid';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
-import { db } from '../db/dexie';
+import { db, enqueueOfflineSyncItem } from '../db/dexie';
 
 export interface BranchSettingsConfig {
   branchId: string;
@@ -139,6 +140,7 @@ export async function saveBranchSettings(
       const bMeta =
         Object.values(BAXNAANO_BRANCHES).find((b) => b.id === bId || b.code === bId) ||
         BAXNAANO_BRANCHES.B1;
+      const nowIso = new Date().toISOString();
       await db.branches.put({
         ...(existing || bMeta),
         id: bId,
@@ -146,7 +148,26 @@ export async function saveBranchSettings(
         taxRate: nextConfig.taxRate,
         receiptHeader: nextConfig.receiptHeader,
         receiptFooter: nextConfig.receiptFooter,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso,
+      });
+
+      await enqueueOfflineSyncItem({
+        id: uuidv4(),
+        branchId: bId,
+        entityType: 'BranchSettings',
+        entityId: bId,
+        operation: 'UPDATE',
+        payload: {
+          exchangeRate: nextConfig.exchangeRate,
+          taxRate: nextConfig.taxRate,
+          receiptHeader: nextConfig.receiptHeader,
+          receiptFooter: nextConfig.receiptFooter,
+        },
+        baseVersion: 1,
+        status: 'PENDING',
+        retryCount: 0,
+        nextRetryAt: Date.now(),
+        createdAt: nowIso,
       });
     }
   } catch {

@@ -82,6 +82,8 @@ export const InventoryPage: React.FC = () => {
 
   useEffect(() => {
     loadLocalInventory();
+    window.addEventListener('baxnaano:data-synced', loadLocalInventory);
+    return () => window.removeEventListener('baxnaano:data-synced', loadLocalInventory);
   }, [activeBranchId]);
 
   const triggerToast = (msg: string) => {

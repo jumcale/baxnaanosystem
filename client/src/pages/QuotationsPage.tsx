@@ -69,10 +69,15 @@ export const QuotationsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadQuotations();
-    loadBranchSettings(activeBranchId).then((s) => {
-      setForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
-    });
+    const refresh = () => {
+      loadQuotations();
+      loadBranchSettings(activeBranchId).then((s) => {
+        setForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
+      });
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   const handleAddLineItem = () => {

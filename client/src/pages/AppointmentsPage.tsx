@@ -79,6 +79,8 @@ export const AppointmentsPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    window.addEventListener('baxnaano:data-synced', loadData);
+    return () => window.removeEventListener('baxnaano:data-synced', loadData);
   }, [activeBranchId]);
 
   // Appointment Form State

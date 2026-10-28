@@ -112,6 +112,8 @@ export const SalesPointPage: React.FC = () => {
 
   useEffect(() => {
     loadPosCatalog();
+    window.addEventListener('baxnaano:data-synced', loadPosCatalog);
+    return () => window.removeEventListener('baxnaano:data-synced', loadPosCatalog);
   }, [activeBranchId]);
 
   const handleExchangeRateChange = (nextVal: number) => {

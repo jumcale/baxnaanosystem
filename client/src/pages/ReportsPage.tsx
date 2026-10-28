@@ -27,15 +27,20 @@ export const ReportsPage: React.FC = () => {
   >(null);
 
   useEffect(() => {
-    Promise.all([
-      getOfflineProductsWithFEFO(activeBranchId),
-      getOfflineCustomersWithAging(activeBranchId),
-      computeOfflineDashboardAnalytics(activeBranchId),
-    ]).then(([prods, custs, dash]) => {
-      setProducts(prods);
-      setCustomers(custs);
-      setDashData(dash);
-    });
+    const refresh = () => {
+      Promise.all([
+        getOfflineProductsWithFEFO(activeBranchId),
+        getOfflineCustomersWithAging(activeBranchId),
+        computeOfflineDashboardAnalytics(activeBranchId),
+      ]).then(([prods, custs, dash]) => {
+        setProducts(prods);
+        setCustomers(custs);
+        setDashData(dash);
+      });
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId, period]);
 
   const stockCostValuationUsd = products.reduce(

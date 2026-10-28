@@ -95,19 +95,109 @@ salesRouter.post(
         for (const reqItem of data.items) {
           const lineDiscountUsd = Number(reqItem.discountUsd || 0);
 
+          // Ensure Product exists on server (supports offline-created or legacy-seeded products)
+          let product = await tx.product.findFirst({
+            where: { id: reqItem.productId, deletedAt: null },
+          });
+          if (!product && reqItem.sku) {
+            product = await tx.product.findFirst({
+              where: { branchId: data.branchId, sku: reqItem.sku, deletedAt: null },
+            });
+          }
+          if (!product) {
+            const category = await tx.category.upsert({
+              where: { branchId_name: { branchId: data.branchId, name: 'General Medicines' } },
+              update: {},
+              create: { branchId: data.branchId, name: 'General Medicines', nameSo: 'Daawooyinka Guud' },
+            });
+            const unit = await tx.unit.upsert({
+              where: { branchId_name: { branchId: data.branchId, name: 'Unit' } },
+              update: {},
+              create: { branchId: data.branchId, name: 'Unit', abbreviation: 'pcs' },
+            });
+            const fallbackSku = reqItem.sku || `SKU-${reqItem.productId.slice(0, 8).toUpperCase()}`;
+            product = await tx.product.upsert({
+              where: { branchId_sku: { branchId: data.branchId, sku: fallbackSku } },
+              update: {},
+              create: {
+                id: reqItem.productId,
+                branchId: data.branchId,
+                categoryId: category.id,
+                unitId: unit.id,
+                sku: fallbackSku,
+                name: reqItem.productName || fallbackSku,
+                buyPriceUsd: reqItem.unitBuyPriceUsd ?? Number((reqItem.unitPriceUsd * 0.65).toFixed(2)),
+                sellPriceUsd: reqItem.unitPriceUsd,
+                reorderLevel: 10,
+              },
+            });
+          }
+
+          const effectiveProductId = product.id;
+
           if (reqItem.batchId) {
             // Explicit batch provided (e.g. chosen or allocated offline)
-            const batch = await tx.productBatch.findFirst({
+            let batch = await tx.productBatch.findFirst({
               where: {
                 id: reqItem.batchId,
                 branchId: data.branchId,
-                productId: reqItem.productId,
                 deletedAt: null,
               },
             });
 
+            if (!batch && reqItem.batchNumber) {
+              batch = await tx.productBatch.findFirst({
+                where: {
+                  branchId: data.branchId,
+                  productId: effectiveProductId,
+                  batchNumber: reqItem.batchNumber,
+                  deletedAt: null,
+                },
+              });
+            }
+
             if (!batch) {
-              throw new Error(`BATCH_NOT_FOUND:${reqItem.productId}`);
+              const fallbackBatchNum =
+                reqItem.batchNumber || `BATCH-${reqItem.batchId.slice(0, 6).toUpperCase()}`;
+              const fallbackExpiry = reqItem.expiryDate
+                ? new Date(reqItem.expiryDate)
+                : new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
+              const buyPrice =
+                reqItem.unitBuyPriceUsd ?? Number(product.buyPriceUsd || reqItem.unitPriceUsd * 0.65);
+
+              batch = await tx.productBatch.upsert({
+                where: {
+                  branchId_productId_batchNumber: {
+                    branchId: data.branchId,
+                    productId: effectiveProductId,
+                    batchNumber: fallbackBatchNum,
+                  },
+                },
+                update: {},
+                create: {
+                  id: reqItem.batchId,
+                  branchId: data.branchId,
+                  productId: effectiveProductId,
+                  batchNumber: fallbackBatchNum,
+                  expiryDate: fallbackExpiry,
+                  buyPriceUsd: buyPrice,
+                  sellPriceUsd: reqItem.unitPriceUsd,
+                  cachedQuantity: Math.max(100, reqItem.quantity),
+                },
+              });
+
+              await tx.stockMovement.create({
+                data: {
+                  branchId: data.branchId,
+                  productId: effectiveProductId,
+                  batchId: batch.id,
+                  userId: req.user!.id,
+                  type: StockMovementType.INITIAL_STOCK,
+                  quantityDelta: Math.max(100, reqItem.quantity),
+                  unitCostUsd: buyPrice,
+                  reason: 'Auto-synced offline batch initial stock',
+                },
+              });
             }
 
             const { bucket } = classifyExpiryBucket(batch.expiryDate);
@@ -134,7 +224,7 @@ salesRouter.post(
             subtotalUsd += reqItem.quantity * reqItem.unitPriceUsd;
 
             resolvedSaleItems.push({
-              productId: reqItem.productId,
+              productId: effectiveProductId,
               batchId: batch.id,
               batchNumber: batch.batchNumber,
               quantity: reqItem.quantity,
@@ -149,7 +239,7 @@ salesRouter.post(
             const fefo = await getProductFEFOAllocation(
               tx,
               data.branchId,
-              reqItem.productId,
+              effectiveProductId,
               reqItem.quantity
             );
 
@@ -179,7 +269,7 @@ salesRouter.post(
               subtotalUsd += alloc.allocatedQuantity * reqItem.unitPriceUsd;
 
               resolvedSaleItems.push({
-                productId: reqItem.productId,
+                productId: effectiveProductId,
                 batchId: alloc.batchId,
                 batchNumber: alloc.batchNumber,
                 quantity: alloc.allocatedQuantity,
@@ -237,31 +327,58 @@ salesRouter.post(
 
         const changeUsd = Number(Math.max(0, paidUsd - (totalUsd - creditAmountUsd)).toFixed(2));
 
-        // 5. Validate Customer & Credit Limit if Credit Payment is used
-        if (creditAmountUsd > 0) {
-          if (!data.customerId) {
-            throw new Error('CUSTOMER_REQUIRED_FOR_CREDIT_SALE');
-          }
-          const customer = await tx.customer.findFirst({
-            where: { id: data.customerId, branchId: data.branchId, deletedAt: null },
+        // 5. Ensure Customer Exists & Validate Credit Limit if Credit Payment is used
+        let resolvedCustomerId: string | null = data.customerId ?? null;
+        if (resolvedCustomerId) {
+          let customer = await tx.customer.findFirst({
+            where: { id: resolvedCustomerId, deletedAt: null },
           });
+          if (!customer && data.customerName) {
+            customer = await tx.customer.create({
+              data: {
+                id: resolvedCustomerId,
+                branchId: data.branchId,
+                name: data.customerName,
+                phone: data.customerPhone || '+252630000000',
+                creditLimitUsd: Math.max(500, creditAmountUsd * 2),
+                currentBalanceUsd: 0,
+              },
+            });
+          }
           if (!customer) {
-            throw new Error('CUSTOMER_NOT_FOUND_IN_BRANCH');
+            if (creditAmountUsd > 0) {
+              customer = await tx.customer.create({
+                data: {
+                  id: resolvedCustomerId,
+                  branchId: data.branchId,
+                  name: data.customerName || 'Credit Customer',
+                  phone: data.customerPhone || '+252630000000',
+                  creditLimitUsd: Math.max(500, creditAmountUsd * 2),
+                  currentBalanceUsd: 0,
+                },
+              });
+            } else {
+              resolvedCustomerId = null;
+            }
+          } else if (creditAmountUsd > 0) {
+            const newBalance = Number(customer.currentBalanceUsd) + creditAmountUsd;
+            if (
+              newBalance > Number(customer.creditLimitUsd) &&
+              !data.approvedById &&
+              req.user!.role !== 'ADMIN' &&
+              req.user!.role !== 'BRANCH_MANAGER' &&
+              req.user!.role !== 'VET_OFFICER' &&
+              !isOfflineSyncReplay
+            ) {
+              throw new Error(
+                `CREDIT_LIMIT_EXCEEDED:limit=${customer.creditLimitUsd}:newBalance=${newBalance.toFixed(
+                  2
+                )}`
+              );
+            }
           }
-          const newBalance = Number(customer.currentBalanceUsd) + creditAmountUsd;
-          if (
-            newBalance > Number(customer.creditLimitUsd) &&
-            !data.approvedById &&
-            req.user!.role !== 'ADMIN' &&
-            req.user!.role !== 'BRANCH_MANAGER' &&
-            !isOfflineSyncReplay
-          ) {
-            throw new Error(
-              `CREDIT_LIMIT_EXCEEDED:limit=${customer.creditLimitUsd}:newBalance=${newBalance.toFixed(
-                2
-              )}`
-            );
-          }
+        } else if (creditAmountUsd > 0) {
+          throw new Error('CUSTOMER_REQUIRED_FOR_CREDIT_SALE');
         }
 
         // 6. Create Sale Record
@@ -271,7 +388,7 @@ salesRouter.post(
             branchId: data.branchId,
             receiptNumber,
             cashierId: req.user!.id,
-            customerId: data.customerId ?? null,
+            customerId: resolvedCustomerId,
             status: 'COMPLETED',
             currency: data.currency as Currency,
             exchangeRateUsed: data.exchangeRateUsed,

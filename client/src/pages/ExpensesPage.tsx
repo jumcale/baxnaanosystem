@@ -66,14 +66,19 @@ export const ExpensesPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadExpenses();
-    loadBranchSettings(activeBranchId).then((s) => {
-      setForm((prev) => ({
-        ...prev,
-        branchId: activeBranchId === 'ALL' ? prev.branchId : activeBranchId,
-        exchangeRateUsed: s.exchangeRate,
-      }));
-    });
+    const refresh = () => {
+      loadExpenses();
+      loadBranchSettings(activeBranchId).then((s) => {
+        setForm((prev) => ({
+          ...prev,
+          branchId: activeBranchId === 'ALL' ? prev.branchId : activeBranchId,
+          exchangeRateUsed: s.exchangeRate,
+        }));
+      });
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

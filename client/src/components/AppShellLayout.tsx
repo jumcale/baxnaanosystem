@@ -110,18 +110,24 @@ export const AppShellLayout: React.FC = () => {
     const onTriggerSync = () => {
       triggerSync();
     };
+    const onWindowFocus = () => {
+      if (navigator.onLine) {
+        triggerSync();
+      }
+    };
 
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
     window.addEventListener('baxnaano:sync-updated', onSyncUpdated);
     window.addEventListener('baxnaano:trigger-sync', onTriggerSync);
+    window.addEventListener('focus', onWindowFocus);
 
     const interval = setInterval(() => {
       refreshPendingCount();
       if (navigator.onLine) {
         triggerSync();
       }
-    }, 8000);
+    }, 4000);
 
     if (navigator.onLine) {
       triggerSync();
@@ -134,6 +140,7 @@ export const AppShellLayout: React.FC = () => {
       window.removeEventListener('offline', onOffline);
       window.removeEventListener('baxnaano:sync-updated', onSyncUpdated);
       window.removeEventListener('baxnaano:trigger-sync', onTriggerSync);
+      window.removeEventListener('focus', onWindowFocus);
       clearInterval(interval);
     };
   }, [accessToken, activeBranchId]);

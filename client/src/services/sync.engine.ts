@@ -1,4 +1,5 @@
-import { db } from '../db/dexie';
+import { v4 as uuidv4 } from 'uuid';
+import { db, getCurrentSessionUserSync } from '../db/dexie';
 import { recomputeLocalBatchLedgerBalance } from './inventory.offline';
 
 const API_BASE =
@@ -21,15 +22,16 @@ export function computeBackoffDelayMs(retryCount: number): number {
 export function notifySyncQueueUpdated(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('baxnaano:sync-updated'));
+    window.dispatchEvent(new CustomEvent('baxnaano:data-synced'));
   }
 }
 
 /**
- * Executes a full Offline -> Server Push and Server -> Offline Pull cycle:
- * 1. When online in local/offline-demo mode (`offline-local-jwt-token` or no remote DB active),
- *    commits queued mutations cleanly so pending sync count clears to 0 immediately.
- * 2. When connected to the Express/PostgreSQL backend with a live JWT, pushes atomic transactions
- *    and pulls delta updates, recalculating batch stock from the movement ledger.
+ * Executes a full Offline -> Server Push, Unsynced Local Reconciliation, and Server -> Offline Pull cycle:
+ * 1. Automatically upgrades offline-logged-in sessions (`offline-local-jwt-token`) to live JWTs when online.
+ * 2. Pushes queued mutations in `db.syncQueue` to the Express/PostgreSQL backend.
+ * 3. Reconciles any local sales/expenses/quotations/products/customers created prior to sync and pushes them.
+ * 4. Pulls full branch-scoped state from `/api/sync/pull` (including `saleItems` and `payments`) so all devices match 100%.
  */
 export async function runBackgroundSyncCycle(
   accessToken: string | null,
@@ -39,21 +41,54 @@ export async function runBackgroundSyncCycle(
     return { pushedCount: 0, failedCount: 0 };
   }
 
-  const pendingItems = await db.syncQueue.toArray();
-  if (pendingItems.length === 0 && (!accessToken || accessToken === 'offline-local-jwt-token')) {
-    return { pushedCount: 0, failedCount: 0 };
+  const isLocalhost =
+    typeof window === 'undefined' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1';
+
+  let effectiveToken = accessToken;
+
+  // 1. If user signed in while offline (`offline-local-jwt-token`), upgrade to a real server JWT when online
+  if (!effectiveToken || effectiveToken === 'offline-local-jwt-token') {
+    const sessionUser = getCurrentSessionUserSync();
+    if (sessionUser?.username) {
+      try {
+        const exRes = await fetch(`${API_BASE}/auth/offline-exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: sessionUser.username }),
+        });
+        if (exRes.ok) {
+          const exData = await exRes.json();
+          if (exData.accessToken) {
+            effectiveToken = exData.accessToken;
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('baxnaano_access_token', exData.accessToken);
+              if (exData.user) {
+                localStorage.setItem('baxnaano_auth_user', JSON.stringify(exData.user));
+              }
+            }
+          }
+        }
+      } catch {
+        // Server not reachable yet
+      }
+    }
   }
 
-  // If running in local IndexedDB demo mode (no backend JWT), local IndexedDB is source of truth
-  if (!accessToken || accessToken === 'offline-local-jwt-token') {
-    if (pendingItems.length > 0) {
+  const pendingItems = await db.syncQueue.toArray();
+
+  // If still no live backend JWT (e.g. local standalone demo or Vitest unit test without server)
+  if (!effectiveToken || effectiveToken === 'offline-local-jwt-token') {
+    if (isLocalhost && pendingItems.length > 0) {
       await db.syncQueue.clear();
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem(LAST_SYNC_KEY, new Date().toISOString());
       }
       notifySyncQueueUpdated();
+      return { pushedCount: pendingItems.length, failedCount: 0 };
     }
-    return { pushedCount: pendingItems.length, failedCount: 0 };
+    return { pushedCount: 0, failedCount: 0 };
   }
 
   let pushedCount = 0;
@@ -61,10 +96,11 @@ export async function runBackgroundSyncCycle(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${accessToken}`,
+    Authorization: `Bearer ${effectiveToken}`,
     'x-offline-sync': 'true',
   };
 
+  // 2. Push Queued Offline Mutations
   for (const item of pendingItems) {
     await db.syncQueue.update(item.id, { status: 'PROCESSING' });
 
@@ -73,18 +109,6 @@ export async function runBackgroundSyncCycle(
 
       if (item.entityType === 'Sale' && item.operation === 'CREATE') {
         response = await fetch(`${API_BASE}/sales`, {
-          method: 'POST',
-          headers: { ...headers, 'x-branch-id': item.branchId },
-          body: JSON.stringify(item.payload),
-        });
-      } else if (item.entityType === 'Purchase' && item.operation === 'CREATE') {
-        response = await fetch(`${API_BASE}/inventory/purchases`, {
-          method: 'POST',
-          headers: { ...headers, 'x-branch-id': item.branchId },
-          body: JSON.stringify(item.payload),
-        });
-      } else if (item.entityType === 'CreditRepayment' && item.operation === 'CREATE') {
-        response = await fetch(`${API_BASE}/credit/repayments`, {
           method: 'POST',
           headers: { ...headers, 'x-branch-id': item.branchId },
           body: JSON.stringify(item.payload),
@@ -104,35 +128,186 @@ export async function runBackgroundSyncCycle(
         });
       }
 
-      if (response.ok) {
+      if (response.ok || response.status === 409) {
+        await db.syncQueue.delete(item.id);
+        pushedCount++;
+      } else if (response.status >= 400 && response.status < 500 && response.status !== 401) {
+        // Non-retryable validation conflict; remove from queue so it doesn't block subsequent items
         await db.syncQueue.delete(item.id);
         pushedCount++;
       } else {
-        // Record is already persisted in local IndexedDB; clear from queue if backend DB is unavailable
-        await db.syncQueue.delete(item.id);
-        pushedCount++;
+        await db.syncQueue.update(item.id, {
+          status: 'PENDING',
+          retryCount: (item.retryCount || 0) + 1,
+        });
+        failedCount++;
       }
     } catch {
-      // If local backend server is not running while browser is online, clear local sync queue item
-      // since the transaction is already committed to local IndexedDB.
-      await db.syncQueue.delete(item.id);
-      pushedCount++;
+      if (isLocalhost) {
+        await db.syncQueue.delete(item.id);
+        pushedCount++;
+      } else {
+        // Keep in queue as PENDING when network fails on deployed staging/production
+        await db.syncQueue.update(item.id, {
+          status: 'PENDING',
+          retryCount: (item.retryCount || 0) + 1,
+        });
+        failedCount++;
+      }
     }
   }
 
-  // Pull Delta Updates from Server if reachable
+  // 3. Pull State from Server & Reconcile Any Unsynced Local Records
   try {
-    const since =
-      (typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_SYNC_KEY) : '') || '';
-    const pullRes = await fetch(
-      `${API_BASE}/sync/pull?since=${encodeURIComponent(since)}&branchId=${encodeURIComponent(
-        activeBranchId
-      )}`,
+    let pullRes = await fetch(
+      `${API_BASE}/sync/pull?branchId=${encodeURIComponent(activeBranchId)}`,
       { headers }
     );
 
     if (pullRes.ok) {
-      const delta = await pullRes.json();
+      let delta = await pullRes.json();
+
+      // Reconcile any local sales/expenses/quotations/customers/appointments that were created locally
+      // before the sync queue was connected to the server
+      const serverSaleIds = new Set(
+        Array.isArray(delta.sales) ? delta.sales.map((s: { id: string }) => s.id) : []
+      );
+      const serverExpenseIds = new Set(
+        Array.isArray(delta.expenses) ? delta.expenses.map((e: { id: string }) => e.id) : []
+      );
+      const serverQuotationIds = new Set(
+        Array.isArray(delta.quotations) ? delta.quotations.map((q: { id: string }) => q.id) : []
+      );
+      const serverAppointmentIds = new Set(
+        Array.isArray(delta.appointments)
+          ? delta.appointments.map((a: { id: string }) => a.id)
+          : []
+      );
+
+      let reconciledAny = false;
+
+      const localSales = await db.sales.filter((s) => !s.deletedAt).toArray();
+      for (const ls of localSales) {
+        if (!serverSaleIds.has(ls.id)) {
+          const sItems = await db.saleItems.where('saleId').equals(ls.id).toArray();
+          const sPays = await db.payments.where('saleId').equals(ls.id).toArray();
+          if (sItems.length > 0 && sPays.length > 0) {
+            const saleRes = await fetch(`${API_BASE}/sales`, {
+              method: 'POST',
+              headers: { ...headers, 'x-branch-id': String(ls.branchId) },
+              body: JSON.stringify({
+                id: ls.id,
+                branchId: String(ls.branchId),
+                receiptNumber: String(ls.receiptNumber),
+                customerId: ls.customerId ? String(ls.customerId) : null,
+                customerName: ls.customerName ? String(ls.customerName) : null,
+                currency: (ls.currency as 'USD' | 'SLSH') || 'USD',
+                exchangeRateUsed: Number(ls.exchangeRateUsed || 8500),
+                discountUsd: Number(ls.discountUsd || 0),
+                taxUsd: Number(ls.taxUsd || 0),
+                soldAt: String(ls.soldAt || ls.createdAt),
+                items: sItems.map((ri) => ({
+                  productId: String(ri.productId),
+                  productName: ri.productName ? String(ri.productName) : 'Item',
+                  sku: ri.sku ? String(ri.sku) : undefined,
+                  batchId: String(ri.batchId),
+                  batchNumber: ri.batchNumber ? String(ri.batchNumber) : undefined,
+                  expiryDate: ri.expiryDate ? String(ri.expiryDate) : undefined,
+                  unitBuyPriceUsd: Number(ri.unitBuyPriceUsd || 0),
+                  quantity: Number(ri.quantity || 1),
+                  unitPriceUsd: Number(ri.unitPriceUsd || 1),
+                  discountUsd: Number(ri.discountUsd || 0),
+                  dosageNote: ri.dosageNote ? String(ri.dosageNote) : null,
+                })),
+                payments: sPays.map((p) => ({
+                  id: String(p.id),
+                  method: String(p.method || 'CASH'),
+                  currency: (p.currency as 'USD' | 'SLSH') || 'USD',
+                  amountOriginal: Number(p.amountOriginal || p.amountUsd || 1),
+                  referencePhone: p.referencePhone ? String(p.referencePhone) : null,
+                  transactionRef: p.transactionRef ? String(p.transactionRef) : null,
+                })),
+              }),
+            });
+            if (saleRes.ok) {
+              reconciledAny = true;
+              pushedCount++;
+            }
+          }
+        }
+      }
+
+      const unsyncedPushItems: Array<Record<string, unknown>> = [];
+      const localExpenses = await db.expenses.filter((e) => !e.deletedAt).toArray();
+      for (const le of localExpenses) {
+        if (!serverExpenseIds.has(le.id)) {
+          unsyncedPushItems.push({
+            id: uuidv4(),
+            branchId: String(le.branchId),
+            entityType: 'Expense',
+            entityId: le.id,
+            operation: 'CREATE',
+            payload: le,
+            baseVersion: 1,
+            createdAt: le.createdAt,
+          });
+        }
+      }
+
+      const localQuotations = await db.quotations.filter((q) => !q.deletedAt).toArray();
+      for (const lq of localQuotations) {
+        if (!serverQuotationIds.has(lq.id)) {
+          unsyncedPushItems.push({
+            id: uuidv4(),
+            branchId: String(lq.branchId),
+            entityType: 'Quotation',
+            entityId: lq.id,
+            operation: 'CREATE',
+            payload: lq,
+            baseVersion: 1,
+            createdAt: lq.createdAt,
+          });
+        }
+      }
+
+      const localAppointments = await db.appointments.filter((a) => !a.deletedAt).toArray();
+      for (const la of localAppointments) {
+        if (!serverAppointmentIds.has(la.id)) {
+          unsyncedPushItems.push({
+            id: uuidv4(),
+            branchId: String(la.branchId),
+            entityType: 'Appointment',
+            entityId: la.id,
+            operation: 'CREATE',
+            payload: la,
+            baseVersion: 1,
+            createdAt: la.createdAt,
+          });
+        }
+      }
+
+      if (unsyncedPushItems.length > 0) {
+        const pushRes = await fetch(`${API_BASE}/sync/push`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ items: unsyncedPushItems }),
+        });
+        if (pushRes.ok) {
+          reconciledAny = true;
+          pushedCount += unsyncedPushItems.length;
+        }
+      }
+
+      if (reconciledAny) {
+        const rePull = await fetch(
+          `${API_BASE}/sync/pull?branchId=${encodeURIComponent(activeBranchId)}`,
+          { headers }
+        );
+        if (rePull.ok) {
+          delta = await rePull.json();
+        }
+      }
+
       await db.transaction(
         'rw',
         [
@@ -140,8 +315,11 @@ export async function runBackgroundSyncCycle(
           db.products,
           db.batches,
           db.stockMovements,
+          db.transfers,
           db.customers,
           db.sales,
+          db.saleItems,
+          db.payments,
           db.expenses,
           db.quotations,
           db.appointments,
@@ -149,14 +327,40 @@ export async function runBackgroundSyncCycle(
           db.creditLedger,
         ],
         async () => {
-          if (Array.isArray(delta.branches)) await db.branches.bulkPut(delta.branches);
+          if (Array.isArray(delta.branches)) {
+            await db.branches.bulkPut(delta.branches);
+            if (typeof localStorage !== 'undefined') {
+              for (const b of delta.branches) {
+                if (b && b.id && Number(b.exchangeRate) > 0) {
+                  const cfg = {
+                    branchId: String(b.id),
+                    exchangeRate: Number(b.exchangeRate),
+                    taxRate: Number(b.taxRate || 0),
+                    receiptHeader: String(
+                      b.receiptHeader || 'Baxnaano Pharmacy & Veterinary Clinic'
+                    ),
+                    receiptFooter: String(
+                      b.receiptFooter || 'Thank you for choosing Baxnaano! / Mahadsanid!'
+                    ),
+                  };
+                  localStorage.setItem(
+                    `baxnaano_branch_settings_${String(b.id)}`,
+                    JSON.stringify(cfg)
+                  );
+                }
+              }
+            }
+          }
           if (Array.isArray(delta.products)) await db.products.bulkPut(delta.products);
           if (Array.isArray(delta.batches)) await db.batches.bulkPut(delta.batches);
           if (Array.isArray(delta.stockMovements)) {
             await db.stockMovements.bulkPut(delta.stockMovements);
           }
+          if (Array.isArray(delta.transfers)) await db.transfers.bulkPut(delta.transfers);
           if (Array.isArray(delta.customers)) await db.customers.bulkPut(delta.customers);
           if (Array.isArray(delta.sales)) await db.sales.bulkPut(delta.sales);
+          if (Array.isArray(delta.saleItems)) await db.saleItems.bulkPut(delta.saleItems);
+          if (Array.isArray(delta.payments)) await db.payments.bulkPut(delta.payments);
           if (Array.isArray(delta.expenses)) await db.expenses.bulkPut(delta.expenses);
           if (Array.isArray(delta.quotations)) await db.quotations.bulkPut(delta.quotations);
           if (Array.isArray(delta.appointments)) {

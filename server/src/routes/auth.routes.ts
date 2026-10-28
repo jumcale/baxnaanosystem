@@ -249,6 +249,53 @@ authRouter.get('/me', authenticateJWT, async (req: Request, res: Response): Prom
 });
 
 /**
+ * POST /api/auth/offline-exchange
+ * Upgrades an offline cached session into a live JWT access token when the device reconnects.
+ */
+authRouter.post('/offline-exchange', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const username = String(req.body?.username || '').trim();
+    if (!username) {
+      res.status(400).json({ error: 'USERNAME_REQUIRED' });
+      return;
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        username: { equals: username, mode: 'insensitive' },
+        deletedAt: null,
+        isActive: true,
+      },
+      include: { role: true, branch: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ error: 'USER_NOT_FOUND' });
+      return;
+    }
+
+    const roleName = user.role.name as RoleName;
+    const authUser: AuthenticatedUser = {
+      id: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      role: roleName,
+      branchId: user.branchId,
+      branchCode: (user.branch?.code as BranchCode) ?? null,
+      branchType: user.branch?.type ?? null,
+      permissions: ROLE_PERMISSIONS[roleName] || [],
+      language: (user.language as 'en' | 'so') || 'en',
+    };
+
+    const accessToken = signAccessToken(authUser);
+    res.json({ accessToken, user: authUser });
+  } catch (error) {
+    console.error('[Auth] Offline exchange error:', error);
+    res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+  }
+});
+
+/**
  * POST /api/auth/users (Admin only - create branch or admin user)
  */
 authRouter.post(

@@ -122,10 +122,11 @@ export function isRecordVisibleToCurrentUser(
   }
 
   if (sessionUser.role === 'VET_OFFICER') {
+    const offlineProfileAlias = `user-${sessionUser.username.toLowerCase().replace(/_/g, '-')}`;
     for (const field of ownerFields) {
       const ownerVal = record[field];
       if (typeof ownerVal === 'string' && ownerVal.length > 0 && ownerVal !== 'seed-user') {
-        return ownerVal === sessionUser.id;
+        return ownerVal === sessionUser.id || ownerVal === offlineProfileAlias;
       }
     }
   }
@@ -134,9 +135,8 @@ export function isRecordVisibleToCurrentUser(
 }
 
 /**
- * Enqueues a sync item if the browser is offline or connected to a remote server token.
- * When online in local standalone mode (`offline-local-jwt-token`), local IndexedDB is
- * already the committed source of truth, so we avoid leaving stuck PENDING items.
+ * Enqueues a sync item if the browser is offline, connected to a remote server token,
+ * or running on a deployed host.
  */
 export async function enqueueOfflineSyncItem(item: OfflineSyncQueueItem): Promise<void> {
   const isBrowserOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
@@ -144,6 +144,10 @@ export async function enqueueOfflineSyncItem(item: OfflineSyncQueueItem): Promis
     typeof localStorage !== 'undefined'
       ? localStorage.getItem('baxnaano_access_token')
       : null;
+  const isRemoteHost =
+    typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1';
 
   if (!isBrowserOnline) {
     await db.syncQueue.put(item);
@@ -153,8 +157,7 @@ export async function enqueueOfflineSyncItem(item: OfflineSyncQueueItem): Promis
     return;
   }
 
-  // When online with a live backend JWT token (not offline-local-jwt-token), queue and trigger immediate sync
-  if (currentToken && currentToken !== 'offline-local-jwt-token') {
+  if ((currentToken && currentToken !== 'offline-local-jwt-token') || isRemoteHost) {
     await db.syncQueue.put(item);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('baxnaano:trigger-sync'));
@@ -162,7 +165,6 @@ export async function enqueueOfflineSyncItem(item: OfflineSyncQueueItem): Promis
     return;
   }
 
-  // In online local mode, data is already committed to IndexedDB; ensure syncQueue has no stale items
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('baxnaano:sync-updated'));
   }

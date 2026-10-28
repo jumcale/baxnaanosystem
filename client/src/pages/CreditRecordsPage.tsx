@@ -63,13 +63,18 @@ export const CreditRecordsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadCreditData();
-    loadBranchSettings(activeBranchId).then((s) => {
-      setRepaymentForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
-    });
+    const refresh = () => {
+      loadCreditData();
+      loadBranchSettings(activeBranchId).then((s) => {
+        setRepaymentForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
+      });
+    };
+    refresh();
     if (activeBranchId !== 'ALL') {
       setNewCustomer((prev) => ({ ...prev, branchId: activeBranchId }));
     }
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   const filteredCustomers = useMemo(() => {

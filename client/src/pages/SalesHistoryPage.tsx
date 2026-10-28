@@ -7,7 +7,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../db/dexie';
+import { db, isRecordVisibleToCurrentUser } from '../db/dexie';
 import { voidOfflineSale } from '../services/finance.offline';
 import { getOfflineReceiptBySaleId, OfflineReceiptData } from '../services/sales.offline';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
@@ -26,7 +26,7 @@ export const SalesHistoryPage: React.FC = () => {
   const [reprintReceipt, setReprintReceipt] = useState<OfflineReceiptData | null>(null);
 
   const loadSalesHistory = async () => {
-    const list =
+    const rawList =
       activeBranchId === 'ALL'
         ? await db.sales.filter((s) => !s.deletedAt).toArray()
         : await db.sales
@@ -35,6 +35,7 @@ export const SalesHistoryPage: React.FC = () => {
             .filter((s) => !s.deletedAt)
             .toArray();
 
+    const list = rawList.filter((s) => isRecordVisibleToCurrentUser(s));
     list.sort(
       (a, b) =>
         new Date(String(b.soldAt)).getTime() - new Date(String(a.soldAt)).getTime()
@@ -44,6 +45,8 @@ export const SalesHistoryPage: React.FC = () => {
 
   useEffect(() => {
     loadSalesHistory();
+    window.addEventListener('baxnaano:data-synced', loadSalesHistory);
+    return () => window.removeEventListener('baxnaano:data-synced', loadSalesHistory);
   }, [activeBranchId]);
 
   const filteredSales = useMemo(() => {
