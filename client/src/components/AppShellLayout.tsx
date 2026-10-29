@@ -23,8 +23,7 @@ import {
 } from 'lucide-react';
 import { APP_MODULES, AppModule, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../db/dexie';
-import { runBackgroundSyncCycle } from '../services/sync.engine';
+import { checkServerHealth } from '../api/client';
 
 const MODULE_ROUTE_CONFIG: Record<
   AppModule,
@@ -61,9 +60,8 @@ export const AppShellLayout: React.FC = () => {
     logout,
   } = useAuth();
 
-  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isServerHealthy, setIsServerHealthy] = useState<boolean>(true);
+  const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(
     () => localStorage.getItem('baxnaano_theme') === 'dark'
   );
@@ -79,71 +77,43 @@ export const AppShellLayout: React.FC = () => {
     }
   }, [darkMode]);
 
-  const refreshPendingCount = async () => {
-    const count = await db.syncQueue
-      .where('status')
-      .anyOf(['PENDING', 'PROCESSING', 'FAILED'])
-      .count();
-    setPendingSyncCount(count);
-  };
-
-  const triggerSync = async () => {
-    if (isSyncing) return;
-    setIsSyncing(true);
+  const checkHealth = async () => {
+    if (!navigator.onLine) {
+      setIsServerHealthy(false);
+      return;
+    }
+    setIsCheckingHealth(true);
     try {
-      await runBackgroundSyncCycle(accessToken, activeBranchId);
-      await refreshPendingCount();
+      const ok = await checkServerHealth();
+      setIsServerHealthy(ok);
+    } catch {
+      setIsServerHealthy(false);
     } finally {
-      setIsSyncing(false);
+      setIsCheckingHealth(false);
     }
   };
 
   useEffect(() => {
-    const onOnline = () => {
-      setIsOnline(true);
-      triggerSync();
-    };
-    const onOffline = () => setIsOnline(false);
-    const onSyncUpdated = () => {
-      refreshPendingCount();
-    };
-    const onTriggerSync = () => {
-      triggerSync();
-    };
-    const onWindowFocus = () => {
-      if (navigator.onLine) {
-        triggerSync();
-      }
-    };
+    checkHealth();
+
+    const onOnline = () => checkHealth();
+    const onOffline = () => setIsServerHealthy(false);
+    const onWindowFocus = () => checkHealth();
 
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
-    window.addEventListener('baxnaano:sync-updated', onSyncUpdated);
-    window.addEventListener('baxnaano:trigger-sync', onTriggerSync);
     window.addEventListener('focus', onWindowFocus);
 
-    const interval = setInterval(() => {
-      refreshPendingCount();
-      if (navigator.onLine) {
-        triggerSync();
-      }
-    }, 4000);
-
-    if (navigator.onLine) {
-      triggerSync();
-    } else {
-      refreshPendingCount();
-    }
+    // Periodic live health check every 15 seconds
+    const interval = setInterval(checkHealth, 15000);
 
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
-      window.removeEventListener('baxnaano:sync-updated', onSyncUpdated);
-      window.removeEventListener('baxnaano:trigger-sync', onTriggerSync);
       window.removeEventListener('focus', onWindowFocus);
       clearInterval(interval);
     };
-  }, [accessToken, activeBranchId]);
+  }, []);
 
   const visibleModules = APP_MODULES.filter((mod) => canViewModule(mod));
 
@@ -326,32 +296,32 @@ export const AppShellLayout: React.FC = () => {
             )}
           </div>
 
-          {/* Right / Top on Mobile: Sync Status, Language Toggle, Theme Toggle & Logout */}
+          {/* Right / Top on Mobile: Server Health Status, Language Toggle, Theme Toggle & Logout */}
           <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0 order-1 sm:order-2">
-            {/* Online / Sync Status Badge */}
+            {/* Live Authoritative Server Connection Indicator */}
             <button
               type="button"
-              onClick={triggerSync}
-              title="Click to synchronize offline queue"
+              onClick={checkHealth}
+              title={
+                isServerHealthy
+                  ? t('sync.server_connected')
+                  : t('sync.server_disconnected')
+              }
               className={`h-9 px-3 rounded-xl border text-xs font-semibold flex items-center gap-2 transition ${
-                isOnline
-                  ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/80 text-emerald-700 dark:text-emerald-300'
-                  : 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+                isServerHealthy
+                  ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-red-50 dark:bg-red-950/60 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 animate-pulse'
               }`}
             >
-              {isOnline ? (
-                <Wifi className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              {isServerHealthy ? (
+                <Wifi className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
               ) : (
-                <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <WifiOff className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
               )}
-              <span>{isOnline ? t('sync.online') : t('sync.offline')}</span>
-              <span className="text-slate-300 dark:text-slate-600">|</span>
-              <span className="flex items-center gap-1 font-bold">
-                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                {pendingSyncCount > 0
-                  ? t('sync.pending_count', { count: pendingSyncCount })
-                  : '0'}
-              </span>
+              <span>{isServerHealthy ? t('sync.online') : t('sync.offline')}</span>
+              {isCheckingHealth && (
+                <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />
+              )}
             </button>
 
             <div className="flex items-center gap-1.5">
@@ -404,6 +374,23 @@ export const AppShellLayout: React.FC = () => {
             </div>
           </div>
         </header>
+
+        {/* Server Disconnected Warning Banner */}
+        {!isServerHealthy && (
+          <div className="bg-red-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-3 shadow-sm shrink-0">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 shrink-0 animate-bounce" />
+              <span>{t('sync.server_disconnected')}</span>
+            </div>
+            <button
+              onClick={checkHealth}
+              disabled={isCheckingHealth}
+              className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded text-xs font-bold transition shrink-0 whitespace-nowrap"
+            >
+              {isCheckingHealth ? t('sync.server_reconnecting') : 'Retry Connection'}
+            </button>
+          </div>
+        )}
 
         {/* Main Page Content */}
         <main className="flex-1">

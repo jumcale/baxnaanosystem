@@ -11,7 +11,7 @@ export default defineConfig({
       manifest: {
         name: 'Baxnaano Pharmacy & Veterinary System',
         short_name: 'Baxnaano POS',
-        description: 'Offline-First Multi-Branch Pharmacy & Veterinary Management System (Arabsiyo & Gabiley)',
+        description: 'Online Multi-Branch Pharmacy & Veterinary Management System (Arabsiyo & Gabiley)',
         theme_color: '#059669',
         background_color: '#0f172a',
         display: 'standalone',
@@ -33,20 +33,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'baxnaano-api-read-cache',
-              networkTimeoutSeconds: 4,
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days offline fallback cache
-              },
-            },
-          },
-        ],
+        // Pure Online-Only: No caching of /api/ endpoints to prevent stale data
+        runtimeCaching: [],
       },
     }),
   ],

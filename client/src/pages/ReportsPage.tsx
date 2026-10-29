@@ -6,41 +6,43 @@ import {
   Download,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getOfflineProductsWithFEFO } from '../services/inventory.offline';
 import {
-  computeOfflineDashboardAnalytics,
+  reportsApi,
+  inventoryApi,
+  creditApi,
   exportToExcelCsv,
-  getOfflineCustomersWithAging,
-} from '../services/reports.offline';
+  ServerProductWithFEFO,
+  CustomerAging,
+  DashboardAnalyticsResponse,
+} from '../api';
 
 export const ReportsPage: React.FC = () => {
   const { t } = useTranslation();
   const { activeBranchId } = useAuth();
 
   const [period, setPeriod] = useState<'DAILY' | 'WEEKLY' | 'MONTHLY'>('MONTHLY');
-  const [products, setProducts] = useState<Awaited<ReturnType<typeof getOfflineProductsWithFEFO>>>([]);
-  const [customers, setCustomers] = useState<
-    Awaited<ReturnType<typeof getOfflineCustomersWithAging>>
-  >([]);
-  const [dashData, setDashData] = useState<
-    Awaited<ReturnType<typeof computeOfflineDashboardAnalytics>> | null
-  >(null);
+  const [products, setProducts] = useState<ServerProductWithFEFO[]>([]);
+  const [customers, setCustomers] = useState<CustomerAging[]>([]);
+  const [dashData, setDashData] = useState<DashboardAnalyticsResponse | null>(null);
 
   useEffect(() => {
     const refresh = () => {
       Promise.all([
-        getOfflineProductsWithFEFO(activeBranchId),
-        getOfflineCustomersWithAging(activeBranchId),
-        computeOfflineDashboardAnalytics(activeBranchId),
+        inventoryApi.getProducts(activeBranchId),
+        creditApi.getCustomers(activeBranchId),
+        reportsApi.getDashboard(activeBranchId),
       ]).then(([prods, custs, dash]) => {
         setProducts(prods);
         setCustomers(custs);
         setDashData(dash);
+      }).catch((err) => {
+        console.error('Reports load error:', err);
       });
     };
     refresh();
-    window.addEventListener('baxnaano:data-synced', refresh);
-    return () => window.removeEventListener('baxnaano:data-synced', refresh);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [activeBranchId, period]);
 
   const stockCostValuationUsd = products.reduce(

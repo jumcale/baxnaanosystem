@@ -1,60 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff } from 'lucide-react';
-import {
-  AuthenticatedUser,
-  BAXNAANO_BRANCHES,
-  ROLE_PERMISSIONS,
-  RoleName,
-} from '@baxnaano/shared';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-
-const OFFLINE_DEMO_PROFILES: Record<
-  string,
-  Omit<AuthenticatedUser, 'permissions'>
-> = {
-  admin: {
-    id: 'user-admin-global',
-    username: 'admin',
-    fullName: 'Guudmare Baxnaano (Global Admin)',
-    role: 'ADMIN',
-    branchId: null,
-    branchCode: null,
-    branchType: null,
-    language: 'en',
-  },
-  manager_b1: {
-    id: 'user-manager-b1',
-    username: 'manager_b1',
-    fullName: 'Axmed Cali (B1 Pharmacy Manager - Arabsiyo)',
-    role: 'BRANCH_MANAGER',
-    branchId: BAXNAANO_BRANCHES.B1.id,
-    branchCode: 'B1',
-    branchType: 'PHARMACY',
-    language: 'en',
-  },
-  vet_b2: {
-    id: 'user-vet-b2',
-    username: 'vet_b2',
-    fullName: 'Dr. Cabdi Warsame (B2 Vet Officer - Arabsiyo)',
-    role: 'VET_OFFICER',
-    branchId: BAXNAANO_BRANCHES.B2.id,
-    branchCode: 'B2',
-    branchType: 'VETERINARY',
-    language: 'en',
-  },
-  vet_b3: {
-    id: 'user-vet-b3',
-    username: 'vet_b3',
-    fullName: 'Dr. Faysal Jaamac (B3 Vet Officer - Gabiley)',
-    role: 'VET_OFFICER',
-    branchId: BAXNAANO_BRANCHES.B3.id,
-    branchCode: 'B3',
-    branchType: 'VETERINARY',
-    language: 'en',
-  },
-};
+import { API_BASE_URL } from '../api/client';
 
 export const LoginPage: React.FC = () => {
   const { t } = useTranslation();
@@ -64,19 +13,16 @@ export const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setIsLoading(true);
 
-    const apiBase =
-      import.meta.env.VITE_API_URL ||
-      (typeof window !== 'undefined' && window.location.port !== '5173'
-        ? `${window.location.origin}/api`
-        : 'http://localhost:4000/api');
     try {
-      const res = await fetch(`${apiBase}/auth/login`, {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -88,22 +34,19 @@ export const LoginPage: React.FC = () => {
         navigate('/');
         return;
       }
+
+      if (res.status === 401 || res.status === 400) {
+        setError(t('auth.errors.invalid_credentials'));
+      } else {
+        setError(`Server error (${res.status}). Please try again.`);
+      }
     } catch {
-      // Offline fallback to cached/seeded profile
+      setError(
+        'Server-ka lama gaari karo / Central server is unreachable. Please check your internet connection.'
+      );
+    } finally {
+      setIsLoading(false);
     }
-
-    const profile = OFFLINE_DEMO_PROFILES[username.toLowerCase()];
-    if (profile && password === 'Password123!') {
-      const authUser: AuthenticatedUser = {
-        ...profile,
-        permissions: ROLE_PERMISSIONS[profile.role as RoleName],
-      };
-      login('offline-local-jwt-token', authUser);
-      navigate('/');
-      return;
-    }
-
-    setError(t('auth.errors.invalid_credentials'));
   };
 
   return (
@@ -164,9 +107,17 @@ export const LoginPage: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full min-h-[52px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition"
+            disabled={isLoading}
+            className="w-full min-h-[52px] bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center gap-2"
           >
-            {t('auth.sign_in')}
+            {isLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Checking...</span>
+              </>
+            ) : (
+              t('auth.sign_in')
+            )}
           </button>
         </form>
       </div>

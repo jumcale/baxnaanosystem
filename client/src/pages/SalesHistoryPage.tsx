@@ -7,47 +7,44 @@ import {
   Search,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { db, isRecordVisibleToCurrentUser } from '../db/dexie';
-import { voidOfflineSale } from '../services/finance.offline';
-import { getOfflineReceiptBySaleId, OfflineReceiptData } from '../services/sales.offline';
+import { salesApi, ReceiptData } from '../api';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 
 export const SalesHistoryPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId, canPerform } = useAuth();
 
-  const [sales, setSales] = useState<Array<Record<string, unknown>>>([]);
+  const [sales, setSales] = useState<Array<any>>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
-  const [voidTargetSale, setVoidTargetSale] = useState<Record<string, unknown> | null>(
-    null
-  );
+  const [voidTargetSale, setVoidTargetSale] = useState<any | null>(null);
   const [voidReason, setVoidReason] = useState('');
-  const [reprintReceipt, setReprintReceipt] = useState<OfflineReceiptData | null>(null);
+  const [reprintReceipt, setReprintReceipt] = useState<ReceiptData | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   const loadSalesHistory = async () => {
-    const rawList =
-      activeBranchId === 'ALL'
-        ? await db.sales.filter((s) => !s.deletedAt).toArray()
-        : await db.sales
-            .where('branchId')
-            .equals(activeBranchId)
-            .filter((s) => !s.deletedAt)
-            .toArray();
-
-    const list = rawList.filter((s) => isRecordVisibleToCurrentUser(s));
-    list.sort(
-      (a, b) =>
-        new Date(String(b.soldAt)).getTime() - new Date(String(a.soldAt)).getTime()
-    );
-    setSales(list);
+    setIsLoading(true);
+    try {
+      const data = await salesApi.getSales({
+        branchId: activeBranchId,
+        date: dateFilter || undefined,
+      });
+      setSales(data.sales || []);
+      setErrorBanner(null);
+    } catch (err: any) {
+      setErrorBanner(err?.message || 'Failed to load sales history from central server.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
     loadSalesHistory();
-    window.addEventListener('baxnaano:data-synced', loadSalesHistory);
-    return () => window.removeEventListener('baxnaano:data-synced', loadSalesHistory);
-  }, [activeBranchId]);
+    const onFocus = () => loadSalesHistory();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [activeBranchId, dateFilter]);
 
   const filteredSales = useMemo(() => {
     return sales.filter((s) => {
@@ -70,15 +67,14 @@ export const SalesHistoryPage: React.FC = () => {
     e.preventDefault();
     if (!voidTargetSale || !user || !voidReason.trim()) return;
 
-    await voidOfflineSale({
-      saleId: String(voidTargetSale.id),
-      reason: voidReason.trim(),
-      approverId: user.id,
-    });
-
-    setVoidTargetSale(null);
-    setVoidReason('');
-    await loadSalesHistory();
+    try {
+      await salesApi.voidSale(String(voidTargetSale.id), voidReason.trim());
+      setVoidTargetSale(null);
+      setVoidReason('');
+      await loadSalesHistory();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to void sale on central server.');
+    }
   };
 
   return (
@@ -158,10 +154,10 @@ export const SalesHistoryPage: React.FC = () => {
 
                 <button
                   onClick={async () => {
-                    const receipt = await getOfflineReceiptBySaleId(String(s.id));
-                    if (receipt) {
+                    try {
+                      const receipt = await salesApi.getReceipt(String(s.id));
                       setReprintReceipt(receipt);
-                    } else {
+                    } catch {
                       window.print();
                     }
                   }}

@@ -9,15 +9,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { mutateOfflineFirst } from '../db/dexie';
-import {
-  getOfflineCustomersWithAging,
-  recordOfflineCreditRepayment,
-} from '../services/finance.offline';
-import {
-  getSavedBranchSettingsSync,
-  loadBranchSettings,
-} from '../services/settings.offline';
+import { creditApi, settingsApi, CustomerAging } from '../api';
 import { NumericInput } from '../components/NumericInput';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 
@@ -25,17 +17,11 @@ export const CreditRecordsPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId, canPerform } = useAuth();
 
-  const [customers, setCustomers] = useState<
-    Awaited<ReturnType<typeof getOfflineCustomersWithAging>>
-  >([]);
+  const [customers, setCustomers] = useState<CustomerAging[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
-  const [selectedForPayment, setSelectedForPayment] = useState<
-    (typeof customers)[number] | null
-  >(null);
-  const [statementCustomer, setStatementCustomer] = useState<
-    (typeof customers)[number] | null
-  >(null);
+  const [selectedForPayment, setSelectedForPayment] = useState<CustomerAging | null>(null);
+  const [statementCustomer, setStatementCustomer] = useState<CustomerAging | null>(null);
 
   const [newCustomer, setNewCustomer] = useState({
     branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
@@ -45,36 +31,40 @@ export const CreditRecordsPage: React.FC = () => {
     creditLimitUsd: 100,
   });
 
-  const [repaymentForm, setRepaymentForm] = useState(() => {
-    const saved = getSavedBranchSettingsSync(activeBranchId);
-    return {
-      method: 'CASH' as 'CASH' | 'EVC_PLUS' | 'ZAAD' | 'EDAHAB',
-      currency: 'USD' as 'USD' | 'SLSH',
-      amountOriginal: 0,
-      exchangeRateUsed: saved.exchangeRate,
-      referencePhone: '',
-      notes: '',
-    };
+  const [repaymentForm, setRepaymentForm] = useState({
+    method: 'CASH' as 'CASH' | 'EVC_PLUS' | 'ZAAD' | 'EDAHAB',
+    currency: 'USD' as 'USD' | 'SLSH',
+    amountOriginal: 0,
+    exchangeRateUsed: 10000,
+    referencePhone: '',
+    notes: '',
   });
 
   const loadCreditData = async () => {
-    const list = await getOfflineCustomersWithAging(activeBranchId);
-    setCustomers(list);
+    try {
+      const list = await creditApi.getCustomers(activeBranchId);
+      setCustomers(list);
+    } catch (err) {
+      console.error('Failed to load customers:', err);
+    }
   };
 
   useEffect(() => {
-    const refresh = () => {
-      loadCreditData();
-      loadBranchSettings(activeBranchId).then((s) => {
-        setRepaymentForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
-      });
-    };
-    refresh();
+    loadCreditData();
+    settingsApi.getBranches().then((branches) => {
+      const b = branches.find((item) => item.id === activeBranchId || item.code === activeBranchId);
+      if (b?.exchangeRate) {
+        setRepaymentForm((prev) => ({ ...prev, exchangeRateUsed: b.exchangeRate }));
+      }
+    });
+
     if (activeBranchId !== 'ALL') {
       setNewCustomer((prev) => ({ ...prev, branchId: activeBranchId }));
     }
-    window.addEventListener('baxnaano:data-synced', refresh);
-    return () => window.removeEventListener('baxnaano:data-synced', refresh);
+
+    const onFocus = () => loadCreditData();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [activeBranchId]);
 
   const filteredCustomers = useMemo(() => {
@@ -109,24 +99,27 @@ export const CreditRecordsPage: React.FC = () => {
         ? newCustomer.branchId || BAXNAANO_BRANCHES.B1.id
         : activeBranchId;
 
-    await mutateOfflineFirst('customers', 'Customer', 'CREATE', {
-      branchId: targetBranch,
-      name: newCustomer.name,
-      phone: newCustomer.phone,
-      villageOrFarm: newCustomer.villageOrFarm,
-      creditLimitUsd: Number(newCustomer.creditLimitUsd),
-      currentBalanceUsd: 0,
-    });
+    try {
+      await creditApi.createCustomer({
+        branchId: targetBranch,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        villageOrFarm: newCustomer.villageOrFarm,
+        creditLimitUsd: Number(newCustomer.creditLimitUsd),
+      });
 
-    setShowAddCustomer(false);
-    setNewCustomer({
-      branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
-      name: '',
-      phone: '',
-      villageOrFarm: '',
-      creditLimitUsd: 100,
-    });
-    await loadCreditData();
+      setShowAddCustomer(false);
+      setNewCustomer({
+        branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
+        name: '',
+        phone: '',
+        villageOrFarm: '',
+        creditLimitUsd: 100,
+      });
+      await loadCreditData();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create customer on server.');
+    }
   };
 
   const handleRecordRepayment = async (e: React.FormEvent) => {
@@ -137,20 +130,23 @@ export const CreditRecordsPage: React.FC = () => {
         ? String(selectedForPayment.branchId || BAXNAANO_BRANCHES.B1.id)
         : activeBranchId;
 
-    await recordOfflineCreditRepayment({
-      branchId: targetBranch,
-      customerId: selectedForPayment.id,
-      method: repaymentForm.method,
-      currency: repaymentForm.currency,
-      amountOriginal: Number(repaymentForm.amountOriginal),
-      exchangeRateUsed: Number(repaymentForm.exchangeRateUsed),
-      referencePhone: repaymentForm.referencePhone,
-      notes: repaymentForm.notes,
-      userId: user.id,
-    });
+    try {
+      await creditApi.recordRepayment({
+        branchId: targetBranch,
+        customerId: selectedForPayment.id,
+        method: repaymentForm.method,
+        currency: repaymentForm.currency,
+        amountOriginal: Number(repaymentForm.amountOriginal),
+        exchangeRateUsed: Number(repaymentForm.exchangeRateUsed),
+        referencePhone: repaymentForm.referencePhone,
+        notes: repaymentForm.notes,
+      });
 
-    setSelectedForPayment(null);
-    await loadCreditData();
+      setSelectedForPayment(null);
+      await loadCreditData();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record credit repayment.');
+    }
   };
 
   return (
