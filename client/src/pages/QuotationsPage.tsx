@@ -21,6 +21,7 @@ import {
   loadBranchSettings,
 } from '../services/settings.offline';
 import { NumericInput } from '../components/NumericInput';
+import { printQuotationPdf, shareQuotationPdfWhatsApp } from '../services/quotationPdf';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 
 export const QuotationsPage: React.FC = () => {
@@ -175,20 +176,12 @@ export const QuotationsPage: React.FC = () => {
     }
   };
 
-  const handleShareWhatsApp = (q: Record<string, unknown>) => {
-    const items =
-      (q.items as Array<{ productName: string; quantity: number; unitPriceUsd: number }>) || [];
-    const lines = items
-      .map((i) => `- ${i.productName} (${i.quantity} x $${i.unitPriceUsd.toFixed(2)})`)
-      .join('%0A');
-    const text = `*BAXNAANO QUOTATION ${String(q.quotationNumber)}*%0ACustomer: ${String(
-      q.customerName || ''
-    )}%0A${lines}%0A*Total: $${Number(q.totalUsd).toFixed(2)} (${Number(
-      q.totalSlsh
-    ).toLocaleString()} SLSH)*%0AValid Until: ${String(q.validUntil).slice(0, 10)}`;
-
-    const phoneClean = String(q.customerPhone || '').replace(/[^0-9]/g, '');
-    window.open(`https://wa.me/${phoneClean}?text=${text}`, '_blank');
+  const handleShareWhatsApp = async (q: Record<string, unknown>) => {
+    try {
+      await shareQuotationPdfWhatsApp(q);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not share PDF');
+    }
   };
 
   const handleConvert = async (quotationId: string) => {
@@ -264,7 +257,7 @@ export const QuotationsPage: React.FC = () => {
                   {t('quotations.share_whatsapp')}
                 </button>
                 <button
-                  onClick={() => window.print()}
+                  onClick={() => printQuotationPdf(q)}
                   className="min-h-[42px] px-3 py-2 border text-xs font-semibold rounded-xl flex items-center gap-1.5"
                 >
                   <Printer className="w-4 h-4" />
