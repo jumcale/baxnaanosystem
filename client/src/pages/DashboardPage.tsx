@@ -113,12 +113,9 @@ export const DashboardPage: React.FC = () => {
         )}
       </div>
 
-      {/* Primary Financial KPI Grid (4 Balanced Cards) */}
-      <div
-        className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${
-          user?.role !== 'ADMIN' && activeBranchId !== 'ALL' ? 'xl:grid-cols-4' : 'xl:grid-cols-3'
-        }`}
-      >
+      {/* Primary Financial KPI Grid (3 Balanced Cards) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Card 1: Today's Sales */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -132,9 +129,11 @@ export const DashboardPage: React.FC = () => {
             <div className="text-2xl md:text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
               ${analytics.kpis.todaySalesUsd.toFixed(2)}
             </div>
-            <span className="text-[11px] font-semibold text-slate-400">
-              Gross: ${analytics.kpis.todayGrossProfitUsd.toFixed(2)}
-            </span>
+            {user?.role === 'ADMIN' && (
+              <span className="text-[11px] font-semibold text-slate-400">
+                Gross: ${analytics.kpis.todayGrossProfitUsd.toFixed(2)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -162,34 +161,7 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 3: Today's Net Profit (hidden for Admin / All Branches view) */}
-        {user?.role !== 'ADMIN' && activeBranchId !== 'ALL' && (
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              {t('dashboard.today_net_profit')}
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-950/50 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4 text-sky-600" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <div className="text-2xl md:text-3xl font-extrabold text-sky-600 dark:text-sky-400">
-              ${analytics.kpis.todayNetProfitUsd.toFixed(2)}
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate(user?.role === 'VET_OFFICER' ? '/pos' : '/reports')}
-              className="text-[11px] font-semibold text-sky-600 hover:underline flex items-center gap-0.5"
-            >
-              {user?.role === 'VET_OFFICER' ? 'POS' : 'P&L Report'}{' '}
-              <ArrowUpRight className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-        )}
-
-        {/* Card 4: Payment Channel Split */}
+        {/* Card 3: Payment Channel Split */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 truncate">
