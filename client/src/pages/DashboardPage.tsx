@@ -35,8 +35,14 @@ export const DashboardPage: React.FC = () => {
       computeOfflineDashboardAnalytics(activeBranchId).then(setAnalytics);
     };
     refresh();
+
+    // Check periodically so when midnight passes (every 24 hrs), a new dashboard starts automatically
+    const timer = setInterval(refresh, 30_000);
     window.addEventListener('baxnaano:data-synced', refresh);
-    return () => window.removeEventListener('baxnaano:data-synced', refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('baxnaano:data-synced', refresh);
+    };
   }, [activeBranchId]);
 
   if (!analytics) {

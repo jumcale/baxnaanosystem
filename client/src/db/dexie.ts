@@ -107,28 +107,19 @@ export function getCurrentSessionUserSync(): {
 }
 
 /**
- * Enforces strict branch + per-user activity isolation so non-admin users (such as `vet_b2` and `vet_b3`)
- * can only view their own branch and their own activities, and can never view each other's data.
+ * Enforces strict branch-level isolation so non-admin users (such as `manager_b1`, `vet_b2`, and `vet_b3`)
+ * can only view their own branch data and can never view other branches' data, while ensuring all activity
+ * within their assigned branch remains fully visible and persistent across logins.
  */
 export function isRecordVisibleToCurrentUser(
   record: Record<string, unknown>,
-  ownerFields: string[] = ['createdById', 'cashierId', 'userId', 'recordedById']
+  _ownerFields: string[] = ['createdById', 'cashierId', 'userId', 'recordedById']
 ): boolean {
   const sessionUser = getCurrentSessionUserSync();
   if (!sessionUser || sessionUser.role === 'ADMIN') return true;
 
   if (sessionUser.branchId && record.branchId && record.branchId !== sessionUser.branchId) {
     return false;
-  }
-
-  if (sessionUser.role === 'VET_OFFICER') {
-    const offlineProfileAlias = `user-${sessionUser.username.toLowerCase().replace(/_/g, '-')}`;
-    for (const field of ownerFields) {
-      const ownerVal = record[field];
-      if (typeof ownerVal === 'string' && ownerVal.length > 0 && ownerVal !== 'seed-user') {
-        return ownerVal === sessionUser.id || ownerVal === offlineProfileAlias;
-      }
-    }
   }
 
   return true;

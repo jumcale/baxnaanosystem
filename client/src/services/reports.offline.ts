@@ -59,9 +59,28 @@ export async function computeOfflineDashboardAnalytics(
   activeBranchId: string
 ): Promise<DashboardAnalytics> {
   const now = new Date();
-  const todayIso = now.toISOString().slice(0, 10);
-  const startOfTodayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  // Start of today: 00:00:00.000 in local timezone (resets every 24 hours at local midnight)
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const startOfTodayMs = startOfToday.getTime();
+  const endOfTodayMs = startOfTodayMs + 24 * 60 * 60 * 1000;
   const thirtyDaysAgoMs = startOfTodayMs - 29 * 24 * 60 * 60 * 1000;
+
+  const isWithinToday = (dateValue: unknown): boolean => {
+    if (!dateValue) return false;
+    const ms = new Date(String(dateValue)).getTime();
+    if (isNaN(ms)) return false;
+    return ms >= startOfTodayMs && ms < endOfTodayMs;
+  };
+
+  const getLocalDateKey = (dateValue: unknown): string => {
+    if (!dateValue) return '';
+    const d = new Date(String(dateValue));
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   const sessionUser = getCurrentSessionUserSync();
   const effectiveBranchId =
@@ -140,7 +159,7 @@ export async function computeOfflineDashboardAnalytics(
   const trendMap = new Map<string, { date: string; salesUsd: number; profitUsd: number }>();
   for (let i = 29; i >= 0; i--) {
     const d = new Date(startOfTodayMs - i * 24 * 60 * 60 * 1000);
-    const key = d.toISOString().slice(0, 10);
+    const key = getLocalDateKey(d);
     trendMap.set(key, { date: key, salesUsd: 0, profitUsd: 0 });
   }
 
@@ -157,11 +176,11 @@ export async function computeOfflineDashboardAnalytics(
 
   for (const sale of scopedSales) {
     const soldTime = new Date(String(sale.soldAt)).getTime();
-    if (soldTime < thirtyDaysAgoMs) continue;
+    if (isNaN(soldTime) || soldTime < thirtyDaysAgoMs) continue;
 
     const saleTotal = Number(sale.totalUsd || 0);
-    const dateKey = String(sale.soldAt).slice(0, 10);
-    const isToday = dateKey === todayIso;
+    const dateKey = getLocalDateKey(sale.soldAt);
+    const isToday = isWithinToday(sale.soldAt);
 
     const items = saleItemsBySaleId.get(sale.id) || [];
     let saleCogs = 0;
@@ -208,7 +227,7 @@ export async function computeOfflineDashboardAnalytics(
   }
 
   const todayExpensesUsd = scopedExpenses
-    .filter((e) => String(e.expenseDate).startsWith(todayIso))
+    .filter((e) => isWithinToday(e.expenseDate))
     .reduce((sum, e) => sum + Number(e.amountUsd || 0), 0);
 
   const todayGrossProfitUsd = todaySalesUsd - todayCogsUsd;
@@ -240,7 +259,7 @@ export async function computeOfflineDashboardAnalytics(
   }
 
   const todayAppointmentsCount = scopedAppointments.filter((a) =>
-    String(a.scheduledAt).startsWith(todayIso)
+    isWithinToday(a.scheduledAt)
   ).length;
   const openTasksCount = scopedTasks.filter(
     (tk) => tk.status === 'OPEN' || tk.status === 'IN_PROGRESS'
@@ -266,7 +285,7 @@ export async function computeOfflineDashboardAnalytics(
     for (const s of bSales) {
       const tot = Number(s.totalUsd || 0);
       bMonthSales += tot;
-      if (String(s.soldAt).startsWith(todayIso)) bTodaySales += tot;
+      if (isWithinToday(s.soldAt)) bTodaySales += tot;
 
       const items = saleItemsBySaleId.get(s.id) || [];
       for (const item of items) {

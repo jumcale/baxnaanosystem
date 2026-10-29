@@ -667,8 +667,6 @@ syncRouter.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const baseWhere = scopedWhere(req);
-      const isVetOfficer = req.user?.role === 'VET_OFFICER';
-      const userId = req.user!.id;
 
       const [
         rawBranches,
@@ -693,10 +691,7 @@ syncRouter.get(
         prisma.stockTransfer.findMany({ where: baseWhere }),
         prisma.customer.findMany({ where: baseWhere }),
         prisma.sale.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { cashierId: userId } : {}),
-          },
+          where: baseWhere,
           include: {
             cashier: { select: { id: true, fullName: true, username: true } },
             customer: { select: { id: true, name: true, phone: true } },
@@ -718,16 +713,10 @@ syncRouter.get(
           orderBy: { soldAt: 'desc' },
         }),
         prisma.expense.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { createdById: userId } : {}),
-          },
+          where: baseWhere,
         }),
         prisma.quotation.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { createdById: userId } : {}),
-          },
+          where: baseWhere,
           include: {
             items: {
               include: {
@@ -737,22 +726,13 @@ syncRouter.get(
           },
         }),
         prisma.appointment.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { assignedStaffId: userId } : {}),
-          },
+          where: baseWhere,
         }),
         prisma.task.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { createdById: userId } : {}),
-          },
+          where: baseWhere,
         }),
         prisma.creditLedger.findMany({
-          where: {
-            ...baseWhere,
-            ...(isVetOfficer ? { recordedById: userId } : {}),
-          },
+          where: baseWhere,
         }),
       ]);
 
