@@ -134,7 +134,16 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
       refreshToken: rawRefreshToken,
       user: authUser,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'P1001' || error?.message?.includes("Can't reach database server")) {
+      console.warn('[Auth] Database connection error: Cannot reach PostgreSQL database. Check DATABASE_URL in .env');
+      res.status(503).json({
+        error: 'DATABASE_UNAVAILABLE',
+        messageKey: 'common.errors.server_error',
+        message: 'Cannot reach the central database server. Please check your connection or database configuration.',
+      });
+      return;
+    }
     console.error('[Auth] Login error:', error);
     res.status(500).json({ error: 'INTERNAL_SERVER_ERROR', messageKey: 'common.errors.server_error' });
   }

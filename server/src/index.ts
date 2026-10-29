@@ -18,7 +18,24 @@ import { reportsRouter } from './routes/reports.routes';
 import { syncRouter } from './routes/sync.routes';
 import { prisma } from './config/db';
 
-dotenv.config();
+const envPaths = [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../.env'),
+];
+for (const p of envPaths) {
+  dotenv.config({ path: p });
+}
+
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL =
+    'postgresql://baxnaano:baxnaano_secret_password@localhost:5432/baxnaano_db?schema=public';
+}
+if (!process.env.JWT_ACCESS_SECRET) {
+  process.env.JWT_ACCESS_SECRET =
+    'baxnaano-prod-jwt-access-secret-2026-arabsiyo-gabiley';
+}
+
 
 export const app = express();
 
@@ -159,8 +176,12 @@ async function runServerStartupMaintenance() {
       }
     });
     console.log('[Baxnaano Server] Startup database maintenance completed.');
-  } catch (err) {
-    console.error('[Baxnaano Server] Startup database maintenance error:', err);
+  } catch (err: any) {
+    if (err?.code === 'P1001' || err?.message?.includes("Can't reach database server")) {
+      console.warn('[Baxnaano Server] Note: PostgreSQL database is not reachable at DATABASE_URL. If developing locally, ensure PostgreSQL is running or set DATABASE_URL in .env.');
+    } else {
+      console.error('[Baxnaano Server] Startup database maintenance error:', err);
+    }
   }
 }
 
