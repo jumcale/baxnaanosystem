@@ -4,42 +4,36 @@ import {
   Settings,
   Globe,
   Database,
-  Upload,
   ShieldCheck,
   Save,
   CheckCircle2,
 } from 'lucide-react';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import {
-  exportFullOfflineDatabaseBackup,
-  restoreFullOfflineDatabaseBackup,
-} from '../services/reports.offline';
-import {
-  getSavedBranchSettingsSync,
-  loadBranchSettings,
-  saveBranchSettings,
-} from '../services/settings.offline';
+import { settingsApi } from '../api';
 import { NumericInput } from '../components/NumericInput';
 
 export const SettingsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { user, activeBranchId } = useAuth();
 
-  const initialSettings = getSavedBranchSettingsSync(activeBranchId);
-
-  const [exchangeRate, setExchangeRate] = useState<number>(initialSettings.exchangeRate);
-  const [taxRate, setTaxRate] = useState<number>(initialSettings.taxRate);
-  const [receiptHeader, setReceiptHeader] = useState<string>(initialSettings.receiptHeader);
-  const [receiptFooter, setReceiptFooter] = useState<string>(initialSettings.receiptFooter);
+  const [exchangeRate, setExchangeRate] = useState<number>(10000);
+  const [taxRate, setTaxRate] = useState<number>(0);
+  const [receiptHeader, setReceiptHeader] = useState<string>('Baxnaano Pharmacy & Veterinary Clinic');
+  const [receiptFooter, setReceiptFooter] = useState<string>('Thank you for choosing Baxnaano! / Mahadsanid!');
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
 
   useEffect(() => {
-    loadBranchSettings(activeBranchId).then((cfg) => {
-      setExchangeRate(cfg.exchangeRate);
-      setTaxRate(cfg.taxRate);
-      setReceiptHeader(cfg.receiptHeader);
-      setReceiptFooter(cfg.receiptFooter);
+    settingsApi.getBranches().then((branches) => {
+      const b = branches.find((item) => item.id === activeBranchId || item.code === activeBranchId) || branches[0];
+      if (b) {
+        if (b.exchangeRate) setExchangeRate(b.exchangeRate);
+        if (b.taxRate !== undefined) setTaxRate(b.taxRate);
+        if (b.receiptHeader) setReceiptHeader(b.receiptHeader);
+        if (b.receiptFooter) setReceiptFooter(b.receiptFooter);
+      }
+    }).catch((err) => {
+      console.error('Failed to load branch settings from server:', err);
     });
   }, [activeBranchId]);
 
@@ -58,29 +52,27 @@ export const SettingsPage: React.FC = () => {
 
   const handleSaveBranchSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    const validRate = exchangeRate > 0 ? exchangeRate : 8500;
-    const saved = await saveBranchSettings(activeBranchId, {
-      exchangeRate: validRate,
-      taxRate: Math.max(0, taxRate),
-      receiptHeader: receiptHeader.trim() || 'Baxnaano Pharmacy & Veterinary Clinic',
-      receiptFooter:
-        receiptFooter.trim() || 'Thank you for choosing Baxnaano! / Mahadsanid!',
-    });
-    setExchangeRate(saved.exchangeRate);
-    setTaxRate(saved.taxRate);
-    showTemporaryBanner(
-      i18n.language === 'so'
-        ? `Waa la kaydiyay! Sarifka cusub: 1 USD = ${saved.exchangeRate.toLocaleString()} SLSH`
-        : `Settings saved! Active Exchange Rate: 1 USD = ${saved.exchangeRate.toLocaleString()} SLSH`
-    );
-  };
+    const validRate = exchangeRate > 0 ? exchangeRate : 10000;
+    const targetBranch =
+      activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId;
 
-  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    await restoreFullOfflineDatabaseBackup(text);
-    showTemporaryBanner('Offline database backup restored successfully.');
+    try {
+      const updated = await settingsApi.updateBranchSettings(targetBranch, {
+        exchangeRate: validRate,
+        taxRate: Math.max(0, taxRate),
+        receiptHeader: receiptHeader.trim() || 'Baxnaano Pharmacy & Veterinary Clinic',
+        receiptFooter: receiptFooter.trim() || 'Thank you for choosing Baxnaano! / Mahadsanid!',
+      });
+      setExchangeRate(updated.exchangeRate);
+      setTaxRate(updated.taxRate);
+      showTemporaryBanner(
+        i18n.language === 'so'
+          ? `Waa la kaydiyay server-ka! Sarifka cusub: 1 USD = ${updated.exchangeRate.toLocaleString()} SLSH`
+          : `Server settings updated! Active Exchange Rate: 1 USD = ${updated.exchangeRate.toLocaleString()} SLSH`
+      );
+    } catch (err: any) {
+      showTemporaryBanner(err?.message || 'Failed to save settings on central server.');
+    }
   };
 
   const resolvedBranchLabel =
@@ -140,34 +132,20 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Offline Backup & Restore (Admin Only to Prevent Cross-User Data Access) */}
-        {user?.role === 'ADMIN' && (
-          <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-4">
-            <h2 className="font-bold text-base flex items-center gap-2">
-              <Database className="w-5 h-5 text-emerald-600" />
-              {t('settings.backup_restore')}
-            </h2>
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={exportFullOfflineDatabaseBackup}
-                className="min-h-[48px] px-4 py-2.5 bg-slate-900 text-white font-semibold rounded-xl text-sm"
-              >
-                {t('settings.download_backup')}
-              </button>
-              <label className="min-h-[48px] px-4 py-2.5 border rounded-xl font-semibold text-sm flex items-center gap-2 cursor-pointer">
-                <Upload className="w-4 h-4" />
-                {t('settings.restore_backup')}
-                <input
-                  type="file"
-                  accept="application/json"
-                  onChange={handleRestoreFile}
-                  className="hidden"
-                />
-              </label>
-            </div>
+        {/* Central Authoritative Database Status */}
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-3">
+          <h2 className="font-bold text-base flex items-center gap-2">
+            <Database className="w-5 h-5 text-emerald-600" />
+            Central PostgreSQL Database
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Authoritative cloud database with real-time consistency across all branches: B1 (Pharmacy Arabsiyo), B2 (Veterinary Arabsiyo), and B3 (Veterinary Gabiley). All sales, inventory, and finances persist directly to the server.
+          </p>
+          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="w-4 h-4" />
+            <span>Online Authoritative Connection Active</span>
           </div>
-        )}
+        </div>
 
         {/* Currency, Exchange Rate & Receipt Template */}
         <form

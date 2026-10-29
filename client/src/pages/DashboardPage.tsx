@@ -17,10 +17,7 @@ import {
 } from 'lucide-react';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import {
-  computeOfflineDashboardAnalytics,
-  DashboardAnalytics,
-} from '../services/reports.offline';
+import { reportsApi, DashboardAnalyticsResponse } from '../api';
 
 export const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
@@ -28,28 +25,65 @@ export const DashboardPage: React.FC = () => {
   const { user, activeBranchId, setActiveBranchId } = useAuth();
 
   const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
-  const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
+  const [analytics, setAnalytics] = useState<DashboardAnalyticsResponse | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const refresh = () => {
-      computeOfflineDashboardAnalytics(activeBranchId).then(setAnalytics);
+    let isMounted = true;
+    const refresh = async () => {
+      try {
+        const data = await reportsApi.getDashboard(activeBranchId);
+        if (isMounted) {
+          setAnalytics(data);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setError(err?.message || 'Error fetching dashboard data');
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
     };
     refresh();
 
-    // Check periodically so when midnight passes (every 24 hrs), a new dashboard starts automatically
-    const timer = setInterval(refresh, 30_000);
-    window.addEventListener('baxnaano:data-synced', refresh);
+    // Check periodically so when midnight passes (every 24 hrs), or on real-time server updates
+    const timer = setInterval(refresh, 20_000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
     return () => {
+      isMounted = false;
       clearInterval(timer);
-      window.removeEventListener('baxnaano:data-synced', refresh);
+      window.removeEventListener('focus', onFocus);
     };
   }, [activeBranchId]);
 
-  if (!analytics) {
+  if (isLoading && !analytics) {
     return (
-      <div className="p-6 text-sm text-slate-500">Loading Executive Dashboard...</div>
+      <div className="p-8 text-center text-sm font-semibold text-slate-500">
+        Loading Authoritative Dashboard from Central Database...
+      </div>
     );
   }
+
+  if (error && !analytics) {
+    return (
+      <div className="p-8 text-center space-y-3">
+        <div className="text-sm font-bold text-red-500">{error}</div>
+        <button
+          onClick={() => reportsApi.getDashboard(activeBranchId).then(setAnalytics)}
+          className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-xl text-xs"
+        >
+          Retry Connection
+        </button>
+      </div>
+    );
+  }
+
+  if (!analytics) return null;
 
   const activeTrend = trendRange === '7d' ? analytics.trend7Days : analytics.trend30Days;
   const maxTrendSale = Math.max(10, ...activeTrend.map((d) => d.salesUsd));

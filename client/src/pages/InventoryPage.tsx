@@ -19,17 +19,7 @@ import {
   SpeciesType,
 } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import { mutateOfflineFirst } from '../db/dexie';
-import {
-  getOfflineProductsWithFEFO,
-  recordOfflinePurchaseStockIn,
-  appendOfflineStockMovement,
-  performOfflineStockTake,
-  createOfflineStockTransfer,
-  getOfflineStockTransfers,
-  getOfflineStockMovements,
-  OfflineStockTransferRecord,
-} from '../services/inventory.offline';
+import { inventoryApi, ServerProductWithFEFO } from '../api';
 import { NumericInput } from '../components/NumericInput';
 
 type InventoryTab =
@@ -46,13 +36,9 @@ export const InventoryPage: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<InventoryTab>('products');
   const [searchQuery, setSearchQuery] = useState('');
-  const [products, setProducts] = useState<Awaited<ReturnType<typeof getOfflineProductsWithFEFO>>>(
-    []
-  );
-  const [transfers, setTransfers] = useState<OfflineStockTransferRecord[]>([]);
-  const [movements, setMovements] = useState<Awaited<ReturnType<typeof getOfflineStockMovements>>>(
-    []
-  );
+  const [products, setProducts] = useState<ServerProductWithFEFO[]>([]);
+  const [transfers, setTransfers] = useState<any[]>([]);
+  const [movements, setMovements] = useState<any[]>([]);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -70,20 +56,26 @@ export const InventoryPage: React.FC = () => {
     activeBranchId === 'ALL' || currentBranchMeta.type === 'VETERINARY';
 
   const loadLocalInventory = async () => {
-    const [list, trfs, movs] = await Promise.all([
-      getOfflineProductsWithFEFO(activeBranchId),
-      getOfflineStockTransfers(activeBranchId),
-      getOfflineStockMovements(activeBranchId),
-    ]);
-    setProducts(list);
-    setTransfers(trfs);
-    setMovements(movs);
+    try {
+      const [list, trfs, movs] = await Promise.all([
+        inventoryApi.getProducts(activeBranchId),
+        inventoryApi.getTransfers(),
+        inventoryApi.getMovements(),
+      ]);
+      setProducts(list);
+      setTransfers(trfs);
+      setMovements(movs);
+    } catch (err: any) {
+      console.error('Inventory fetch error:', err);
+      triggerToast(err?.message || 'Failed to load inventory from server.');
+    }
   };
 
   useEffect(() => {
     loadLocalInventory();
-    window.addEventListener('baxnaano:data-synced', loadLocalInventory);
-    return () => window.removeEventListener('baxnaano:data-synced', loadLocalInventory);
+    const onFocus = () => loadLocalInventory();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [activeBranchId]);
 
   const triggerToast = (msg: string) => {
@@ -160,42 +152,44 @@ export const InventoryPage: React.FC = () => {
 
   // Stock Take Counts State (batchId -> physical count)
   const [stockTakeCounts, setStockTakeCounts] = useState<Record<string, number>>({});
-  const [varianceResults, setVarianceResults] = useState<
-    Awaited<ReturnType<typeof performOfflineStockTake>>['varianceReport'] | null
-  >(null);
+  const [varianceResults, setVarianceResults] = useState<any[] | null>(null);
 
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetBranch =
       activeBranchId === 'ALL' ? newProduct.branchId : activeBranchId;
 
-    await mutateOfflineFirst('products', 'Product', 'CREATE', {
-      ...newProduct,
-      branchId: targetBranch,
-    });
+    try {
+      await inventoryApi.createProduct({
+        ...newProduct,
+        branchId: targetBranch,
+      });
 
-    setShowAddProductModal(false);
-    setNewProduct({
-      branchId: BAXNAANO_BRANCHES.B1.id,
-      sku: '',
-      barcode: '',
-      name: '',
-      categoryId: 'default-category',
-      unitId: 'default-unit',
-      buyPriceUsd: 0,
-      sellPriceUsd: 0,
-      reorderLevel: 15,
-      genericName: '',
-      dosageForm: 'Tablet',
-      strength: '',
-      isPrescriptionOnly: false,
-      targetSpecies: [],
-      dosePerKg: '',
-      withdrawalPeriodDays: 0,
-      isColdChainRequired: false,
-    });
-    await loadLocalInventory();
-    triggerToast(`${newProduct.name} saved offline.`);
+      setShowAddProductModal(false);
+      setNewProduct({
+        branchId: BAXNAANO_BRANCHES.B1.id,
+        sku: '',
+        barcode: '',
+        name: '',
+        categoryId: 'default-category',
+        unitId: 'default-unit',
+        buyPriceUsd: 0,
+        sellPriceUsd: 0,
+        reorderLevel: 15,
+        genericName: '',
+        dosageForm: 'Tablet',
+        strength: '',
+        isPrescriptionOnly: false,
+        targetSpecies: [],
+        dosePerKg: '',
+        withdrawalPeriodDays: 0,
+        isColdChainRequired: false,
+      });
+      await loadLocalInventory();
+      triggerToast(`${newProduct.name} saved successfully.`);
+    } catch (err: any) {
+      triggerToast(err?.message || 'Failed to create product.');
+    }
   };
 
   const handleReceivePurchase = async (e: React.FormEvent) => {
@@ -217,37 +211,40 @@ export const InventoryPage: React.FC = () => {
         ? purchaseForm.sellPriceUsd
         : Number(selectedProd?.sellPriceUsd || buyPrice * 1.5);
 
-    await recordOfflinePurchaseStockIn({
-      branchId: targetBranch,
-      supplierId: purchaseForm.supplierId,
-      invoiceNumber: purchaseForm.invoiceNumber,
-      paidAmountUsd: Number(purchaseForm.paidAmountUsd),
-      userId: user.id,
-      items: [
-        {
-          productId: purchaseForm.productId,
-          batchNumber: purchaseForm.batchNumber,
-          expiryDate: purchaseForm.expiryDate,
-          quantity: Math.max(1, Number(purchaseForm.quantity)),
-          buyPriceUsd: buyPrice,
-          sellPriceUsd: sellPrice,
-        },
-      ],
-    });
+    try {
+      await inventoryApi.createPurchase({
+        branchId: targetBranch,
+        supplierId: purchaseForm.supplierId,
+        invoiceNumber: purchaseForm.invoiceNumber,
+        paidAmountUsd: Number(purchaseForm.paidAmountUsd),
+        items: [
+          {
+            productId: purchaseForm.productId,
+            batchNumber: purchaseForm.batchNumber,
+            expiryDate: purchaseForm.expiryDate,
+            quantity: Math.max(1, Number(purchaseForm.quantity)),
+            buyPriceUsd: buyPrice,
+            sellPriceUsd: sellPrice,
+          },
+        ],
+      });
 
-    setPurchaseForm({
-      supplierId: 'default-supplier',
-      invoiceNumber: '',
-      productId: '',
-      batchNumber: '',
-      expiryDate: '',
-      quantity: 50,
-      buyPriceUsd: 0,
-      sellPriceUsd: 0,
-      paidAmountUsd: 0,
-    });
-    await loadLocalInventory();
-    triggerToast(`Batch #${purchaseForm.batchNumber} received into FEFO ledger.`);
+      setPurchaseForm({
+        supplierId: 'default-supplier',
+        invoiceNumber: '',
+        productId: '',
+        batchNumber: '',
+        expiryDate: '',
+        quantity: 50,
+        buyPriceUsd: 0,
+        sellPriceUsd: 0,
+        paidAmountUsd: 0,
+      });
+      await loadLocalInventory();
+      triggerToast(`Batch #${purchaseForm.batchNumber} received into database.`);
+    } catch (err: any) {
+      triggerToast(err?.message || 'Failed to record purchase stock in.');
+    }
   };
 
   const handleRecordAdjustment = async (e: React.FormEvent) => {
@@ -265,26 +262,28 @@ export const InventoryPage: React.FC = () => {
         ? Math.abs(Number(adjustmentForm.quantity))
         : -Math.abs(Number(adjustmentForm.quantity));
 
-    await appendOfflineStockMovement({
-      branchId: targetBranch,
-      productId: adjustmentForm.productId,
-      batchId: adjustmentForm.batchId,
-      userId: user.id,
-      type: adjustmentForm.type,
-      quantityDelta: signedDelta,
-      referenceType: 'ADJUSTMENT',
-      reason: adjustmentForm.reason,
-    });
+    try {
+      await inventoryApi.createAdjustment({
+        branchId: targetBranch,
+        productId: adjustmentForm.productId,
+        batchId: adjustmentForm.batchId,
+        type: adjustmentForm.type,
+        quantity: signedDelta,
+        reason: adjustmentForm.reason,
+      });
 
-    setAdjustmentForm({
-      productId: '',
-      batchId: '',
-      type: 'DAMAGE_EXPIRED',
-      quantity: 1,
-      reason: '',
-    });
-    await loadLocalInventory();
-    triggerToast('Stock movement appended to ledger.');
+      setAdjustmentForm({
+        productId: '',
+        batchId: '',
+        type: 'DAMAGE_EXPIRED',
+        quantity: 1,
+        reason: '',
+      });
+      await loadLocalInventory();
+      triggerToast('Stock movement appended to server ledger.');
+    } catch (err: any) {
+      triggerToast(err?.message || 'Failed to record stock adjustment.');
+    }
   };
 
   const handleCreateTransfer = async (e: React.FormEvent) => {
@@ -298,14 +297,13 @@ export const InventoryPage: React.FC = () => {
         : activeBranchId;
 
     try {
-      const trf = await createOfflineStockTransfer({
-        sourceBranchId,
+      const trf = await inventoryApi.createTransfer({
+        branchId: sourceBranchId,
         destinationBranchId: transferForm.destinationBranchId,
         productId: transferForm.productId,
         batchId: transferForm.batchId,
         quantity: Math.max(1, Number(transferForm.quantity)),
         notes: transferForm.notes,
-        userId: user.id,
       });
 
       setTransferForm({
@@ -316,7 +314,7 @@ export const InventoryPage: React.FC = () => {
         notes: '',
       });
       await loadLocalInventory();
-      triggerToast(`Transfer #${trf.transferNumber} completed.`);
+      triggerToast(`Transfer #${trf?.transferNumber || ''} created successfully.`);
     } catch (err: unknown) {
       triggerToast(err instanceof Error ? err.message : 'Transfer failed');
     }
@@ -345,20 +343,27 @@ export const InventoryPage: React.FC = () => {
       groupedByBranch.set(bId, arr);
     }
 
-    const allVariances: NonNullable<typeof varianceResults> = [];
-    for (const [bId, entries] of groupedByBranch.entries()) {
-      const report = await performOfflineStockTake({
-        branchId: bId,
-        userId: user.id,
-        reason: 'Periodic Physical Stock Count',
-        entries,
-      });
-      allVariances.push(...report.varianceReport);
-    }
+    try {
+      const allVariances: any[] = [];
+      for (const [bId, entries] of groupedByBranch.entries()) {
+        const report = await inventoryApi.performStockTake({
+          branchId: bId,
+          items: entries.map((e) => ({
+            batchId: e.batchId,
+            physicalCount: e.physicalCount,
+          })),
+        });
+        if (report?.varianceReport) {
+          allVariances.push(...report.varianceReport);
+        }
+      }
 
-    setVarianceResults(allVariances);
-    await loadLocalInventory();
-    triggerToast('Stock take reconciled against ledger.');
+      setVarianceResults(allVariances);
+      await loadLocalInventory();
+      triggerToast('Stock take reconciled against server database.');
+    } catch (err: any) {
+      triggerToast(err?.message || 'Failed to reconcile stock take.');
+    }
   };
 
   const toggleTargetSpecies = (sp: SpeciesType) => {

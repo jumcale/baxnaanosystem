@@ -10,75 +10,61 @@ import {
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import { db, isRecordVisibleToCurrentUser } from '../db/dexie';
-import {
-  createOfflineExpense,
-  approveOfflineExpense,
-} from '../services/finance.offline';
-import {
-  getSavedBranchSettingsSync,
-  loadBranchSettings,
-} from '../services/settings.offline';
+import { expensesApi, settingsApi } from '../api';
 import { NumericInput } from '../components/NumericInput';
 
 export const ExpensesPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId, canPerform } = useAuth();
 
-  const [expenses, setExpenses] = useState<Array<Record<string, unknown>>>([]);
+  const [expenses, setExpenses] = useState<Array<any>>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const [form, setForm] = useState(() => {
-    const saved = getSavedBranchSettingsSync(activeBranchId);
-    return {
-      branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
-      category: 'UTILITIES',
-      payee: '',
-      currencyPaid: 'USD' as 'USD' | 'SLSH',
-      amountOriginal: 0,
-      exchangeRateUsed: saved.exchangeRate,
-      paymentMethod: 'CASH',
-      description: '',
-      receiptPhotoData: null as string | null,
-      isRecurring: false,
-      recurringFrequency: 'MONTHLY' as 'DAILY' | 'WEEKLY' | 'MONTHLY',
-    };
+  const [form, setForm] = useState({
+    branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
+    category: 'UTILITIES',
+    payee: '',
+    currencyPaid: 'USD' as 'USD' | 'SLSH',
+    amountOriginal: 0,
+    exchangeRateUsed: 10000,
+    paymentMethod: 'CASH',
+    description: '',
+    receiptPhotoData: null as string | null,
+    isRecurring: false,
+    recurringFrequency: 'MONTHLY' as 'DAILY' | 'WEEKLY' | 'MONTHLY',
   });
 
   const loadExpenses = async () => {
-    const rawList =
-      activeBranchId === 'ALL'
-        ? await db.expenses.filter((e) => !e.deletedAt).toArray()
-        : await db.expenses
-            .where('branchId')
-            .equals(activeBranchId)
-            .filter((e) => !e.deletedAt)
-            .toArray();
-
-    const list = rawList.filter((e) => isRecordVisibleToCurrentUser(e));
-
-    list.sort(
-      (a, b) =>
-        new Date(String(b.expenseDate)).getTime() -
-        new Date(String(a.expenseDate)).getTime()
-    );
-    setExpenses(list);
+    setIsLoading(true);
+    try {
+      const list = await expensesApi.getExpenses({
+        branchId: activeBranchId,
+      });
+      setExpenses(list);
+    } catch (err) {
+      console.error('Failed to load expenses:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    const refresh = () => {
-      loadExpenses();
-      loadBranchSettings(activeBranchId).then((s) => {
+    loadExpenses();
+    settingsApi.getBranches().then((branches) => {
+      const b = branches.find((item) => item.id === activeBranchId || item.code === activeBranchId);
+      if (b?.exchangeRate) {
         setForm((prev) => ({
           ...prev,
           branchId: activeBranchId === 'ALL' ? prev.branchId : activeBranchId,
-          exchangeRateUsed: s.exchangeRate,
+          exchangeRateUsed: b.exchangeRate,
         }));
-      });
-    };
-    refresh();
-    window.addEventListener('baxnaano:data-synced', refresh);
-    return () => window.removeEventListener('baxnaano:data-synced', refresh);
+      }
+    });
+
+    const onFocus = () => loadExpenses();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [activeBranchId]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,38 +85,44 @@ export const ExpensesPage: React.FC = () => {
         ? form.branchId || BAXNAANO_BRANCHES.B1.id
         : activeBranchId;
 
-    await createOfflineExpense({
-      branchId: targetBranch,
-      category: form.category,
-      currencyPaid: form.currencyPaid,
-      amountOriginal: Number(form.amountOriginal),
-      exchangeRateUsed: Number(form.exchangeRateUsed),
-      paymentMethod: form.paymentMethod,
-      payee: form.payee,
-      description: form.description,
-      receiptPhotoData: form.receiptPhotoData,
-      isRecurring: form.isRecurring,
-      recurringFrequency: form.isRecurring ? form.recurringFrequency : null,
-      userId: user.id,
-      userRole: user.role,
-    });
+    try {
+      await expensesApi.createExpense({
+        branchId: targetBranch,
+        category: form.category,
+        currencyPaid: form.currencyPaid,
+        amountOriginal: Number(form.amountOriginal),
+        exchangeRateUsed: Number(form.exchangeRateUsed),
+        paymentMethod: form.paymentMethod,
+        payee: form.payee,
+        description: form.description,
+        receiptPhotoData: form.receiptPhotoData,
+        isRecurring: form.isRecurring,
+        recurringFrequency: form.isRecurring ? form.recurringFrequency : undefined,
+      });
 
-    setShowAddModal(false);
-    setForm((prev) => ({
-      ...prev,
-      payee: '',
-      amountOriginal: 0,
-      description: '',
-      receiptPhotoData: null,
-      isRecurring: false,
-    }));
-    await loadExpenses();
+      setShowAddModal(false);
+      setForm((prev) => ({
+        ...prev,
+        payee: '',
+        amountOriginal: 0,
+        description: '',
+        receiptPhotoData: null,
+        isRecurring: false,
+      }));
+      await loadExpenses();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record expense on server.');
+    }
   };
 
   const handleApproval = async (expenseId: string, status: 'APPROVED' | 'REJECTED') => {
     if (!user) return;
-    await approveOfflineExpense(expenseId, status, user.id);
-    await loadExpenses();
+    try {
+      await expensesApi.approveExpense(expenseId, status);
+      await loadExpenses();
+    } catch (err: any) {
+      alert(err?.message || 'Approval failed.');
+    }
   };
 
   return (

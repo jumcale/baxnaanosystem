@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Printer, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { OfflineReceiptData } from '../services/sales.offline';
+import { ReceiptData } from '../api';
 
 interface ReceiptPreviewModalProps {
-  receipt: OfflineReceiptData;
+  receipt: ReceiptData;
   onCloseAndNewSale: () => void;
 }
 
