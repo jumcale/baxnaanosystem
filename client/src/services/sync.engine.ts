@@ -232,6 +232,12 @@ export async function runBackgroundSyncCycle(
             if (saleRes.ok) {
               reconciledAny = true;
               pushedCount++;
+            } else if (saleRes.status >= 400 && saleRes.status < 500 && saleRes.status !== 401) {
+              // Server permanently rejected this local sale (e.g. invalid product, negative stock, bad data)
+              // Delete the rejected sale locally so it doesn't cause permanent discrepancies across devices
+              await db.sales.delete(ls.id);
+              await db.saleItems.where('saleId').equals(ls.id).delete();
+              await db.payments.where('saleId').equals(ls.id).delete();
             }
           }
         }
@@ -351,17 +357,78 @@ export async function runBackgroundSyncCycle(
               }
             }
           }
-          if (Array.isArray(delta.products)) await db.products.bulkPut(delta.products);
+          if (Array.isArray(delta.products)) {
+            await db.products.bulkPut(delta.products);
+            const legacySkus = new Set([
+              'B2-IVER-100ML',
+              'B2-PPR-VAC',
+              'B3-OXY-20LA',
+              'B2-IVER-100',
+              'B3-IVER-100',
+            ]);
+            const allLocalProds = await db.products.toArray();
+            for (const lp of allLocalProds) {
+              if (
+                legacySkus.has(String(lp.sku || '')) ||
+                String(lp.name || '').includes('Oxytetracycline 20% Long Acting (100ml)')
+              ) {
+                await db.products.delete(lp.id);
+                await db.batches.where('productId').equals(lp.id).delete();
+                await db.stockMovements.where('productId').equals(lp.id).delete();
+              }
+            }
+          }
           if (Array.isArray(delta.batches)) await db.batches.bulkPut(delta.batches);
           if (Array.isArray(delta.stockMovements)) {
             await db.stockMovements.bulkPut(delta.stockMovements);
           }
           if (Array.isArray(delta.transfers)) await db.transfers.bulkPut(delta.transfers);
           if (Array.isArray(delta.customers)) await db.customers.bulkPut(delta.customers);
-          if (Array.isArray(delta.sales)) await db.sales.bulkPut(delta.sales);
+          if (Array.isArray(delta.sales)) {
+            await db.sales.bulkPut(delta.sales);
+            // Prune orphaned/deleted local sales in this branch that are NOT in delta.sales and NOT in syncQueue
+            if (activeBranchId !== 'ALL') {
+              const activeQueue = await db.syncQueue.toArray();
+              const pendingSaleIds = new Set(
+                activeQueue
+                  .filter((q) => q.entityType === 'Sale')
+                  .map((q) => q.entityId)
+              );
+              const branchLocalSales = await db.sales
+                .where('branchId')
+                .equals(activeBranchId)
+                .toArray();
+              for (const bls of branchLocalSales) {
+                if (!serverSaleIds.has(bls.id) && !pendingSaleIds.has(bls.id)) {
+                  await db.sales.delete(bls.id);
+                  await db.saleItems.where('saleId').equals(bls.id).delete();
+                  await db.payments.where('saleId').equals(bls.id).delete();
+                }
+              }
+            }
+          }
           if (Array.isArray(delta.saleItems)) await db.saleItems.bulkPut(delta.saleItems);
           if (Array.isArray(delta.payments)) await db.payments.bulkPut(delta.payments);
-          if (Array.isArray(delta.expenses)) await db.expenses.bulkPut(delta.expenses);
+          if (Array.isArray(delta.expenses)) {
+            await db.expenses.bulkPut(delta.expenses);
+            if (activeBranchId !== 'ALL') {
+              const activeQueue = await db.syncQueue.toArray();
+              const pendingExpIds = new Set(
+                activeQueue
+                  .filter((q) => q.entityType === 'Expense')
+                  .map((q) => q.entityId)
+              );
+              const branchLocalExp = await db.expenses
+                .where('branchId')
+                .equals(activeBranchId)
+                .toArray();
+              for (const ble of branchLocalExp) {
+                if (!serverExpenseIds.has(ble.id) && !pendingExpIds.has(ble.id)) {
+                  await db.expenses.delete(ble.id);
+                }
+              }
+            }
+          }
           if (Array.isArray(delta.quotations)) await db.quotations.bulkPut(delta.quotations);
           if (Array.isArray(delta.appointments)) {
             await db.appointments.bulkPut(delta.appointments);

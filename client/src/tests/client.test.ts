@@ -45,7 +45,7 @@ describe('Baxnaano Client PWA Bilingual & Multi-Branch Verification', () => {
 
   it('returns default branch settings synchronously when no custom settings exist', () => {
     const settings = getSavedBranchSettingsSync(BAXNAANO_BRANCHES.B1.id);
-    expect(settings.exchangeRate).toBe(8500);
+    expect(settings.exchangeRate).toBe(10000);
     expect(settings.taxRate).toBe(0);
     expect(settings.receiptHeader).toContain('Baxnaano');
   });

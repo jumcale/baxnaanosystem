@@ -120,9 +120,23 @@ export async function computeOfflineDashboardAnalytics(
     isAll ? allExpenses : allExpenses.filter((e) => e.branchId === effectiveBranchId)
   ).filter((e) => isRecordVisibleToCurrentUser(e));
 
+  const legacyPlaceholderSkus = new Set([
+    'B2-IVER-100ML',
+    'B2-PPR-VAC',
+    'B3-OXY-20LA',
+    'B2-IVER-100',
+    'B3-IVER-100',
+  ]);
+
   const scopedProducts = (
     isAll ? allProducts : allProducts.filter((p) => p.branchId === effectiveBranchId)
-  ).filter((p) => isRecordVisibleToCurrentUser(p));
+  )
+    .filter((p) => isRecordVisibleToCurrentUser(p))
+    .filter(
+      (p) =>
+        !legacyPlaceholderSkus.has(String(p.sku || '').trim()) &&
+        !String(p.name || '').includes('Oxytetracycline 20% Long Acting (100ml)')
+    );
 
   const scopedBatches = (
     isAll ? allBatches : allBatches.filter((b) => b.branchId === effectiveBranchId)

@@ -16,6 +16,7 @@ import { quotationsRouter } from './routes/quotations.routes';
 import { appointmentsRouter } from './routes/appointments.routes';
 import { reportsRouter } from './routes/reports.routes';
 import { syncRouter } from './routes/sync.routes';
+import { prisma } from './config/db';
 
 dotenv.config();
 
@@ -100,8 +101,72 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 const PORT = Number(process.env.PORT) || 4000;
 
+async function runServerStartupMaintenance() {
+  try {
+    const legacySkus = ['B2-IVER-100ML', 'B2-PPR-VAC', 'B3-OXY-20LA', 'B2-IVER-100', 'B3-IVER-100'];
+    await prisma.$transaction(async (tx) => {
+      // 1. Soft-delete obsolete legacy sample products
+      await tx.product.updateMany({
+        where: {
+          OR: [
+            { sku: { in: legacySkus } },
+            { name: { contains: 'Oxytetracycline 20% Long Acting (100ml)' } },
+          ],
+          deletedAt: null,
+        },
+        data: { deletedAt: new Date(), isActive: false },
+      });
+
+      // 2. Find legacy products
+      const legacyProds = await tx.product.findMany({
+        where: {
+          OR: [
+            { sku: { in: legacySkus } },
+            { name: { contains: 'Oxytetracycline 20% Long Acting (100ml)' } },
+          ],
+        },
+        select: { id: true },
+      });
+      const legacyProdIds = legacyProds.map((p) => p.id);
+
+      if (legacyProdIds.length > 0) {
+        // Soft delete their batches
+        await tx.productBatch.updateMany({
+          where: { productId: { in: legacyProdIds }, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+
+        // Soft delete legacy sales that used obsolete items
+        const legacyItems = await tx.saleItem.findMany({
+          where: { productId: { in: legacyProdIds }, deletedAt: null },
+          select: { saleId: true },
+        });
+        const legacySaleIds = legacyItems.map((i) => i.saleId);
+        if (legacySaleIds.length > 0) {
+          await tx.sale.updateMany({
+            where: { id: { in: legacySaleIds }, deletedAt: null },
+            data: { deletedAt: new Date(), voidOrRefundReason: 'Purged obsolete legacy seed product sale' },
+          });
+          await tx.saleItem.updateMany({
+            where: { saleId: { in: legacySaleIds }, deletedAt: null },
+            data: { deletedAt: new Date() },
+          });
+          await tx.payment.updateMany({
+            where: { saleId: { in: legacySaleIds }, deletedAt: null },
+            data: { deletedAt: new Date() },
+          });
+        }
+      }
+    });
+    console.log('[Baxnaano Server] Startup database maintenance completed.');
+  } catch (err) {
+    console.error('[Baxnaano Server] Startup database maintenance error:', err);
+  }
+}
+
 if (!process.env.VITEST) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Baxnaano Server] Listening on http://0.0.0.0:${PORT}`);
+    runServerStartupMaintenance();
   });
 }

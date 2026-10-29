@@ -2,7 +2,7 @@ import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { db } from '../db/dexie';
 
 const SEED_VERSION_KEY = 'baxnaano_seed_version';
-const CURRENT_SEED_VERSION = 'v4-vet-32-items';
+const CURRENT_SEED_VERSION = 'v5-clean-reconcile';
 
 export interface VetSeedItem {
   itemNo: number;
@@ -137,23 +137,70 @@ export async function ensureLocalOfflineSeedData(): Promise<void> {
 
   await db.transaction(
     'rw',
-    [db.branches, db.products, db.batches, db.stockMovements, db.customers],
+    [
+      db.branches,
+      db.products,
+      db.batches,
+      db.stockMovements,
+      db.customers,
+      db.sales,
+      db.saleItems,
+      db.payments,
+      db.syncQueue,
+    ],
     async () => {
-      // Remove legacy placeholder B2/B3 products and non-canonical B1 duplicates
+      // 1. Remove legacy placeholder B2/B3 products, non-canonical duplicates, and orphaned records
       const allProducts = await db.products.toArray();
+      const purgedProductIds = new Set<string>();
+      const purgedBatchIds = new Set<string>();
+
       for (const p of allProducts) {
-        const sku = String(p.sku || '');
+        const sku = String(p.sku || '').trim();
+        const name = String(p.name || '').trim();
         const shouldRemove =
           legacyPlaceholderSkus.has(sku) ||
+          name.includes('Oxytetracycline 20% Long Acting (100ml)') ||
+          name.includes('PPR Sheep & Goat Vaccine') ||
           (b1CanonicalSkus.has(sku) && !b1CanonicalIds.has(p.id));
 
         if (shouldRemove) {
+          purgedProductIds.add(p.id);
           const oldBatches = await db.batches.where('productId').equals(p.id).toArray();
           for (const ob of oldBatches) {
+            purgedBatchIds.add(ob.id);
             await db.stockMovements.where('batchId').equals(ob.id).delete();
             await db.batches.delete(ob.id);
           }
           await db.products.delete(p.id);
+        }
+      }
+
+      // Purge any sale items, sales, payments, or sync queue records associated with purged legacy products
+      if (purgedProductIds.size > 0 || purgedBatchIds.size > 0) {
+        const allSaleItems = await db.saleItems.toArray();
+        const affectedSaleIds = new Set<string>();
+
+        for (const item of allSaleItems) {
+          if (purgedProductIds.has(item.productId) || purgedBatchIds.has(item.batchId)) {
+            affectedSaleIds.add(item.saleId);
+            await db.saleItems.delete(item.id);
+          }
+        }
+
+        for (const saleId of affectedSaleIds) {
+          const remainingItems = await db.saleItems.where('saleId').equals(saleId).toArray();
+          if (remainingItems.length === 0) {
+            await db.sales.delete(saleId);
+            await db.payments.where('saleId').equals(saleId).delete();
+            await db.syncQueue.where('entityId').equals(saleId).delete();
+          }
+        }
+
+        const allQueue = await db.syncQueue.toArray();
+        for (const q of allQueue) {
+          if (purgedProductIds.has(q.entityId) || affectedSaleIds.has(q.entityId)) {
+            await db.syncQueue.delete(q.id);
+          }
         }
       }
 
