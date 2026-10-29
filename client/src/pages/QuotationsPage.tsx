@@ -8,14 +8,18 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { db, isRecordVisibleToCurrentUser } from '../db/dexie';
+import { getOfflineProductsWithFEFO } from '../services/inventory.offline';
 import {
-  quotationsApi,
-  inventoryApi,
-  settingsApi,
-  ReceiptData,
-  ServerProductWithFEFO,
-} from '../api';
+  createOfflineQuotation,
+  convertOfflineQuotationToSale,
+} from '../services/finance.offline';
+import { OfflineReceiptData } from '../services/sales.offline';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
+import {
+  getSavedBranchSettingsSync,
+  loadBranchSettings,
+} from '../services/settings.offline';
 import { NumericInput } from '../components/NumericInput';
 import { printQuotationPdf, shareQuotationPdfWhatsApp } from '../services/quotationPdf';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
@@ -24,56 +28,59 @@ export const QuotationsPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId } = useAuth();
 
-  const [quotations, setQuotations] = useState<Array<any>>([]);
-  const [products, setProducts] = useState<ServerProductWithFEFO[]>([]);
+  const [quotations, setQuotations] = useState<Array<Record<string, unknown>>>([]);
+  const [products, setProducts] = useState<Awaited<ReturnType<typeof getOfflineProductsWithFEFO>>>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [convertedReceipt, setConvertedReceipt] = useState<ReceiptData | null>(null);
+  const [convertedReceipt, setConvertedReceipt] = useState<OfflineReceiptData | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [form, setForm] = useState({
-    customerName: '',
-    customerPhone: '',
-    validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-    exchangeRateUsed: 10000,
-    discountUsd: 0,
-    selectedProductId: '',
-    selectedQty: 1,
-    items: [] as Array<{
-      productId: string;
-      productName: string;
-      sku: string;
-      quantity: number;
-      unitPriceUsd: number;
-    }>,
+  const [form, setForm] = useState(() => {
+    const saved = getSavedBranchSettingsSync(activeBranchId);
+    return {
+      customerName: '',
+      customerPhone: '',
+      validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      exchangeRateUsed: saved.exchangeRate,
+      discountUsd: 0,
+      selectedProductId: '',
+      selectedQty: 1,
+      items: [] as Array<{
+        productId: string;
+        productName: string;
+        sku: string;
+        quantity: number;
+        unitPriceUsd: number;
+      }>,
+    };
   });
 
   const loadQuotations = async () => {
-    try {
-      const [qList, pList] = await Promise.all([
-        quotationsApi.getQuotations(activeBranchId),
-        inventoryApi.getProducts(activeBranchId),
-      ]);
-      setQuotations(qList);
-      setProducts(pList);
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to load quotations from server.');
-    }
+    const rawQList =
+      activeBranchId === 'ALL'
+        ? await db.quotations.filter((q) => !q.deletedAt).toArray()
+        : await db.quotations
+            .where('branchId')
+            .equals(activeBranchId)
+            .filter((q) => !q.deletedAt)
+            .toArray();
+    setQuotations(rawQList.filter((q) => isRecordVisibleToCurrentUser(q)));
+
+    const pList = await getOfflineProductsWithFEFO(activeBranchId);
+    setProducts(pList);
   };
 
   useEffect(() => {
-    loadQuotations();
-    settingsApi.getBranches().then((branches) => {
-      const b = branches.find((item) => item.id === activeBranchId || item.code === activeBranchId);
-      if (b?.exchangeRate) {
-        setForm((prev) => ({ ...prev, exchangeRateUsed: b.exchangeRate }));
-      }
-    });
-
-    const onFocus = () => loadQuotations();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    const refresh = () => {
+      loadQuotations();
+      loadBranchSettings(activeBranchId).then((s) => {
+        setForm((prev) => ({ ...prev, exchangeRateUsed: s.exchangeRate }));
+      });
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   const buildLineItemFromSelection = () => {
@@ -140,18 +147,15 @@ export const QuotationsPage: React.FC = () => {
 
     setIsSaving(true);
     try {
-      await quotationsApi.createQuotation({
+      await createOfflineQuotation({
         branchId: targetBranch,
         customerName: form.customerName.trim() || 'Walk-in',
-        customerPhone: form.customerPhone.trim() || undefined,
-        currency: 'USD',
+        customerPhone: form.customerPhone.trim(),
         exchangeRateUsed: form.exchangeRateUsed,
         discountUsd: form.discountUsd,
-        items: items.map((i) => ({
-          productId: i.productId,
-          quantity: i.quantity,
-          unitPriceUsd: i.unitPriceUsd,
-        })),
+        validUntil: form.validUntil,
+        userId: user.id,
+        items,
       });
 
       setShowCreateModal(false);
@@ -165,14 +169,14 @@ export const QuotationsPage: React.FC = () => {
         items: [],
       }));
       await loadQuotations();
-    } catch (err: any) {
-      setFormError(err?.message || 'Failed to save quotation on server.');
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to save quotation.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleShareWhatsApp = async (q: any) => {
+  const handleShareWhatsApp = async (q: Record<string, unknown>) => {
     try {
       await shareQuotationPdfWhatsApp(q);
     } catch (err) {
@@ -180,18 +184,18 @@ export const QuotationsPage: React.FC = () => {
     }
   };
 
-  const handleConvert = async (target: any) => {
+  const handleConvert = async (quotationId: string) => {
     if (!user) return;
     setErrorMsg(null);
-    const quotation =
-      typeof target === 'string' ? quotations.find((q) => q.id === target) : target;
-    if (!quotation) return;
     try {
-      const receipt = await quotationsApi.convertToSale(quotation, 'CASH');
+      const receipt = await convertOfflineQuotationToSale(quotationId, 'CASH', {
+        id: user.id,
+        fullName: user.fullName,
+      });
       setConvertedReceipt(receipt);
       await loadQuotations();
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'Conversion failed on server.');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Conversion failed');
     }
   };
 

@@ -23,15 +23,14 @@ import {
   BAXNAANO_BRANCHES,
 } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
+import { db } from '../db/dexie';
+import { getOfflineProductsWithFEFO } from '../services/inventory.offline';
+import { processOfflineSaleCheckout, OfflineReceiptData } from '../services/sales.offline';
 import {
-  inventoryApi,
-  salesApi,
-  creditApi,
-  settingsApi,
-  ServerProductWithFEFO,
-  ReceiptData,
-  formatServerSaleToReceipt,
-} from '../api';
+  getSavedBranchSettingsSync,
+  loadBranchSettings,
+  saveBranchSettings,
+} from '../services/settings.offline';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { NumericInput } from '../components/NumericInput';
 
@@ -67,16 +66,19 @@ export const SalesPointPage: React.FC = () => {
   const productsTopRef = useRef<HTMLDivElement>(null);
   const cartSectionRef = useRef<HTMLFormElement>(null);
 
-  const [products, setProducts] = useState<ServerProductWithFEFO[]>([]);
-  const [customers, setCustomers] = useState<Array<any>>([]);
+  const initialBranchSettings = getSavedBranchSettingsSync(activeBranchId);
+
+  const [products, setProducts] = useState<Awaited<ReturnType<typeof getOfflineProductsWithFEFO>>>(
+    []
+  );
+  const [customers, setCustomers] = useState<Array<Record<string, unknown>>>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [exchangeRate, setExchangeRate] = useState<number>(10000);
-  const [taxRate, setTaxRate] = useState<number>(0);
+  const [exchangeRate, setExchangeRate] = useState<number>(initialBranchSettings.exchangeRate);
+  const [taxRate, setTaxRate] = useState<number>(initialBranchSettings.taxRate);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [orderDiscountUsd, setOrderDiscountUsd] = useState<number>(0);
   const [prescriptionRef, setPrescriptionRef] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [payments, setPayments] = useState<SplitPaymentRow[]>([
     {
       id: 'pay-1',
@@ -88,54 +90,42 @@ export const SalesPointPage: React.FC = () => {
   ]);
 
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
-  const [completedReceipt, setCompletedReceipt] = useState<ReceiptData | null>(null);
+  const [completedReceipt, setCompletedReceipt] = useState<OfflineReceiptData | null>(null);
 
   const loadPosCatalog = async () => {
-    try {
-      const [prodList, custList, branches] = await Promise.all([
-        inventoryApi.getProducts(activeBranchId),
-        creditApi.getCustomers(activeBranchId),
-        settingsApi.getBranches(),
-      ]);
-      setProducts(prodList);
-      setCustomers(custList);
+    const [prodList, cfg] = await Promise.all([
+      getOfflineProductsWithFEFO(activeBranchId),
+      loadBranchSettings(activeBranchId),
+    ]);
+    setProducts(prodList);
+    setExchangeRate(cfg.exchangeRate);
+    setTaxRate(cfg.taxRate);
 
-      const targetBranch = branches.find(
-        (b) => b.id === activeBranchId || b.code === activeBranchId
-      ) || branches[0];
-      if (targetBranch) {
-        if (targetBranch.exchangeRate) setExchangeRate(targetBranch.exchangeRate);
-        if (targetBranch.taxRate !== undefined) setTaxRate(targetBranch.taxRate);
-      }
-    } catch (err: any) {
-      console.error('POS Catalog load error:', err);
-      setErrorBanner(
-        err?.message || 'Server connection error. Unable to load products from database.'
-      );
-    }
+    const custList =
+      activeBranchId === 'ALL'
+        ? await db.customers.filter((c) => !c.deletedAt).toArray()
+        : await db.customers
+            .where('branchId')
+            .equals(activeBranchId)
+            .filter((c) => !c.deletedAt)
+            .toArray();
+    setCustomers(custList);
   };
 
   useEffect(() => {
     loadPosCatalog();
-    const onFocus = () => loadPosCatalog();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener('baxnaano:data-synced', loadPosCatalog);
+    return () => window.removeEventListener('baxnaano:data-synced', loadPosCatalog);
   }, [activeBranchId]);
 
-  const handleExchangeRateChange = async (nextVal: number) => {
+  const handleExchangeRateChange = (nextVal: number) => {
     if (nextVal > 0) {
       setExchangeRate(nextVal);
-      if (activeBranchId && activeBranchId !== 'ALL') {
-        try {
-          await settingsApi.updateBranchSettings(activeBranchId, { exchangeRate: nextVal });
-        } catch {
-          // ignore error
-        }
-      }
+      saveBranchSettings(activeBranchId, { exchangeRate: nextVal });
     }
   };
 
-  const effectiveRate = exchangeRate > 0 ? exchangeRate : 10000;
+  const effectiveRate = exchangeRate > 0 ? exchangeRate : 8500;
 
   // Fast Search & Barcode Exact Match Listener
   const filteredProducts = useMemo(() => {
@@ -323,7 +313,7 @@ export const SalesPointPage: React.FC = () => {
     e.preventDefault();
     setErrorBanner(null);
 
-    if (!user || cart.length === 0 || isSubmitting) return;
+    if (!user || cart.length === 0) return;
 
     const targetBranchId =
       activeBranchId === 'ALL'
@@ -341,39 +331,38 @@ export const SalesPointPage: React.FC = () => {
       return;
     }
 
-    setIsSubmitting(true);
     try {
-      const serverSale = await salesApi.createSale({
-        branchId: targetBranchId,
-        customerId: selectedCustomerId || undefined,
-        currency: 'USD',
-        exchangeRateUsed: effectiveRate,
-        discountUsd: orderDiscountUsd,
-        taxUsd: computedTaxUsd,
-        prescriptionRef: prescriptionRef || undefined,
-        items: cart.map((c) => ({
-          productId: c.productId,
-          quantity: c.quantity,
-          unitPriceUsd: c.unitPriceUsd,
-          discountUsd: c.discountUsd,
-          dosageNote: c.dosageNote || undefined,
-        })),
-        payments: payments.map((p) => ({
-          method: p.method,
-          currency: p.currency,
-          amountOriginal: Number(p.amountOriginal),
-          referencePhone: p.referencePhone || undefined,
-        })),
-      });
+      const receipt = await processOfflineSaleCheckout(
+        {
+          branchId: targetBranchId,
+          customerId: selectedCustomerId || null,
+          currency: 'USD',
+          exchangeRateUsed: effectiveRate,
+          discountUsd: orderDiscountUsd,
+          taxUsd: computedTaxUsd,
+          prescriptionRef: prescriptionRef || null,
+          items: cart.map((c) => ({
+            productId: c.productId,
+            quantity: c.quantity,
+            unitPriceUsd: c.unitPriceUsd,
+            discountUsd: c.discountUsd,
+            dosageNote: c.dosageNote || null,
+          })),
+          payments: payments.map((p) => ({
+            method: p.method,
+            currency: p.currency,
+            amountOriginal: Number(p.amountOriginal),
+            referencePhone: p.referencePhone || null,
+          })),
+        },
+        { id: user.id, fullName: user.fullName }
+      );
 
-      const receipt = formatServerSaleToReceipt(serverSale);
       setCompletedReceipt(receipt);
       await loadPosCatalog();
-    } catch (err: any) {
-      const msg = err?.message || 'Checkout failed. Ensure server connection is active.';
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Checkout error';
       setErrorBanner(msg);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -800,14 +789,10 @@ export const SalesPointPage: React.FC = () => {
 
           <button
             type="submit"
-            disabled={cart.length === 0 || isSubmitting}
-            className="w-full min-h-[54px] bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-bold text-base rounded-xl shadow-md transition flex items-center justify-center gap-2"
+            disabled={cart.length === 0}
+            className="w-full min-h-[54px] bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-bold text-base rounded-xl shadow-md transition"
           >
-            {isSubmitting ? (
-              <span>Processing Sale with Central Server...</span>
-            ) : (
-              `${t('pos.complete_sale')} ($${totalUsd.toFixed(2)})`
-            )}
+            {t('pos.complete_sale')} (${totalUsd.toFixed(2)})
           </button>
         </form>
       </div>

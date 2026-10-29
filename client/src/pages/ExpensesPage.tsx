@@ -10,61 +10,75 @@ import {
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import { expensesApi, settingsApi } from '../api';
+import { db, isRecordVisibleToCurrentUser } from '../db/dexie';
+import {
+  createOfflineExpense,
+  approveOfflineExpense,
+} from '../services/finance.offline';
+import {
+  getSavedBranchSettingsSync,
+  loadBranchSettings,
+} from '../services/settings.offline';
 import { NumericInput } from '../components/NumericInput';
 
 export const ExpensesPage: React.FC = () => {
   const { t } = useTranslation();
   const { user, activeBranchId, canPerform } = useAuth();
 
-  const [expenses, setExpenses] = useState<Array<any>>([]);
+  const [expenses, setExpenses] = useState<Array<Record<string, unknown>>>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
-  const [form, setForm] = useState({
-    branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
-    category: 'UTILITIES',
-    payee: '',
-    currencyPaid: 'USD' as 'USD' | 'SLSH',
-    amountOriginal: 0,
-    exchangeRateUsed: 10000,
-    paymentMethod: 'CASH',
-    description: '',
-    receiptPhotoData: null as string | null,
-    isRecurring: false,
-    recurringFrequency: 'MONTHLY' as 'DAILY' | 'WEEKLY' | 'MONTHLY',
+  const [form, setForm] = useState(() => {
+    const saved = getSavedBranchSettingsSync(activeBranchId);
+    return {
+      branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
+      category: 'UTILITIES',
+      payee: '',
+      currencyPaid: 'USD' as 'USD' | 'SLSH',
+      amountOriginal: 0,
+      exchangeRateUsed: saved.exchangeRate,
+      paymentMethod: 'CASH',
+      description: '',
+      receiptPhotoData: null as string | null,
+      isRecurring: false,
+      recurringFrequency: 'MONTHLY' as 'DAILY' | 'WEEKLY' | 'MONTHLY',
+    };
   });
 
   const loadExpenses = async () => {
-    setIsLoading(true);
-    try {
-      const list = await expensesApi.getExpenses({
-        branchId: activeBranchId,
-      });
-      setExpenses(list);
-    } catch (err) {
-      console.error('Failed to load expenses:', err);
-    } finally {
-      setIsLoading(false);
-    }
+    const rawList =
+      activeBranchId === 'ALL'
+        ? await db.expenses.filter((e) => !e.deletedAt).toArray()
+        : await db.expenses
+            .where('branchId')
+            .equals(activeBranchId)
+            .filter((e) => !e.deletedAt)
+            .toArray();
+
+    const list = rawList.filter((e) => isRecordVisibleToCurrentUser(e));
+
+    list.sort(
+      (a, b) =>
+        new Date(String(b.expenseDate)).getTime() -
+        new Date(String(a.expenseDate)).getTime()
+    );
+    setExpenses(list);
   };
 
   useEffect(() => {
-    loadExpenses();
-    settingsApi.getBranches().then((branches) => {
-      const b = branches.find((item) => item.id === activeBranchId || item.code === activeBranchId);
-      if (b?.exchangeRate) {
+    const refresh = () => {
+      loadExpenses();
+      loadBranchSettings(activeBranchId).then((s) => {
         setForm((prev) => ({
           ...prev,
           branchId: activeBranchId === 'ALL' ? prev.branchId : activeBranchId,
-          exchangeRateUsed: b.exchangeRate,
+          exchangeRateUsed: s.exchangeRate,
         }));
-      }
-    });
-
-    const onFocus = () => loadExpenses();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+      });
+    };
+    refresh();
+    window.addEventListener('baxnaano:data-synced', refresh);
+    return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,44 +99,38 @@ export const ExpensesPage: React.FC = () => {
         ? form.branchId || BAXNAANO_BRANCHES.B1.id
         : activeBranchId;
 
-    try {
-      await expensesApi.createExpense({
-        branchId: targetBranch,
-        category: form.category,
-        currencyPaid: form.currencyPaid,
-        amountOriginal: Number(form.amountOriginal),
-        exchangeRateUsed: Number(form.exchangeRateUsed),
-        paymentMethod: form.paymentMethod,
-        payee: form.payee,
-        description: form.description,
-        receiptPhotoData: form.receiptPhotoData,
-        isRecurring: form.isRecurring,
-        recurringFrequency: form.isRecurring ? form.recurringFrequency : undefined,
-      });
+    await createOfflineExpense({
+      branchId: targetBranch,
+      category: form.category,
+      currencyPaid: form.currencyPaid,
+      amountOriginal: Number(form.amountOriginal),
+      exchangeRateUsed: Number(form.exchangeRateUsed),
+      paymentMethod: form.paymentMethod,
+      payee: form.payee,
+      description: form.description,
+      receiptPhotoData: form.receiptPhotoData,
+      isRecurring: form.isRecurring,
+      recurringFrequency: form.isRecurring ? form.recurringFrequency : null,
+      userId: user.id,
+      userRole: user.role,
+    });
 
-      setShowAddModal(false);
-      setForm((prev) => ({
-        ...prev,
-        payee: '',
-        amountOriginal: 0,
-        description: '',
-        receiptPhotoData: null,
-        isRecurring: false,
-      }));
-      await loadExpenses();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to record expense on server.');
-    }
+    setShowAddModal(false);
+    setForm((prev) => ({
+      ...prev,
+      payee: '',
+      amountOriginal: 0,
+      description: '',
+      receiptPhotoData: null,
+      isRecurring: false,
+    }));
+    await loadExpenses();
   };
 
   const handleApproval = async (expenseId: string, status: 'APPROVED' | 'REJECTED') => {
     if (!user) return;
-    try {
-      await expensesApi.approveExpense(expenseId, status);
-      await loadExpenses();
-    } catch (err: any) {
-      alert(err?.message || 'Approval failed.');
-    }
+    await approveOfflineExpense(expenseId, status, user.id);
+    await loadExpenses();
   };
 
   return (

@@ -15,6 +15,7 @@ import { AppointmentsPage } from './pages/AppointmentsPage';
 import { CreditRecordsPage } from './pages/CreditRecordsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ensureLocalOfflineSeedData } from './services/seed.offline';
 import './i18n';
 
 const RoleDefaultHome: React.FC = () => {
@@ -28,14 +29,7 @@ const RoleDefaultHome: React.FC = () => {
 
 export const App: React.FC = () => {
   useEffect(() => {
-    // Clear legacy offline Dexie databases so laptop and mobile reflect identical authoritative server data
-    if (typeof window !== 'undefined' && window.indexedDB) {
-      try {
-        window.indexedDB.deleteDatabase('BaxnaanoERP_DB');
-      } catch {
-        // ignore
-      }
-    }
+    ensureLocalOfflineSeedData();
   }, []);
 
   return (

@@ -27,11 +27,16 @@ import {
 } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
 import {
-  appointmentsApi,
+  getOfflineAppointments,
+  saveOfflineAppointment,
+  updateOfflineAppointmentStatus,
+  getOfflineTasks,
+  createOfflineTask,
+  updateOfflineTaskStatus,
   buildAppointmentReminderLinks,
-  ServerAppointment,
-  ServerTask,
-} from '../api';
+  OfflineAppointmentRecord,
+  OfflineTaskRecord,
+} from '../services/appointments.offline';
 import { NumericInput } from '../components/NumericInput';
 
 type ActiveView = 'list' | 'calendar' | 'tasks';
@@ -41,8 +46,8 @@ export const AppointmentsPage: React.FC = () => {
   const { user, activeBranchId } = useAuth();
 
   const [view, setView] = useState<ActiveView>('list');
-  const [appointments, setAppointments] = useState<ServerAppointment[]>([]);
-  const [tasks, setTasks] = useState<ServerTask[]>([]);
+  const [appointments, setAppointments] = useState<OfflineAppointmentRecord[]>([]);
+  const [tasks, setTasks] = useState<OfflineTaskRecord[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10)
@@ -64,23 +69,18 @@ export const AppointmentsPage: React.FC = () => {
     activeBranchId === 'ALL' || currentBranchMeta.type === 'VETERINARY';
 
   const loadData = async () => {
-    try {
-      const [appts, tskRes] = await Promise.all([
-        appointmentsApi.getAppointments(),
-        appointmentsApi.getTasks(),
-      ]);
-      setAppointments(appts);
-      setTasks(tskRes.tasks);
-    } catch (err) {
-      console.error('Failed to load appointments & tasks:', err);
-    }
+    const [appts, tsks] = await Promise.all([
+      getOfflineAppointments(activeBranchId),
+      getOfflineTasks(activeBranchId),
+    ]);
+    setAppointments(appts);
+    setTasks(tsks);
   };
 
   useEffect(() => {
     loadData();
-    const onFocus = () => loadData();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener('baxnaano:data-synced', loadData);
+    return () => window.removeEventListener('baxnaano:data-synced', loadData);
   }, [activeBranchId]);
 
   // Appointment Form State
@@ -147,59 +147,51 @@ export const AppointmentsPage: React.FC = () => {
     const targetBranch =
       activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId;
 
-    try {
-      await appointmentsApi.createAppointment({
-        branchId: targetBranch,
-        assignedStaffId: user.id,
-        patientOrOwner: apptForm.patientOrOwner,
-        phone: apptForm.phone,
-        status: 'BOOKED',
-        visitType: (apptForm.visitType === 'FARM_VISIT'
-          ? 'VET_FARM_VISIT'
-          : isVetBranch
-          ? 'VET_CLINIC_VISIT'
-          : 'PHARMACY_CONSULTATION') as any,
-        scheduledAt: new Date(apptForm.scheduledAt).toISOString(),
-        species: isVetBranch ? (apptForm.species as any) : null,
-        animalCount: isVetBranch ? Number(apptForm.animalCount) : null,
-        villageOrFarm: isVetBranch ? apptForm.villageOrFarm || null : null,
-        treatmentNotes: isVetBranch ? apptForm.treatmentNotes || null : null,
-        diagnosis: apptForm.diagnosis || null,
-        prescriptionText: isPharmacyBranch ? apptForm.prescriptionText || null : null,
-        followUpDate: apptForm.followUpDate ? new Date(apptForm.followUpDate).toISOString() : null,
-        reminderSent: false,
-      });
+    await saveOfflineAppointment({
+      branchId: targetBranch,
+      assignedStaffId: user.id,
+      assignedStaffName: user.fullName,
+      patientOrOwner: apptForm.patientOrOwner,
+      phone: apptForm.phone,
+      status: 'BOOKED',
+      visitType: apptForm.visitType,
+      scheduledAt: new Date(apptForm.scheduledAt).toISOString(),
+      patientAge: apptForm.patientAge ? Number(apptForm.patientAge) : null,
+      patientGender: isPharmacyBranch ? apptForm.patientGender : null,
+      symptoms: isPharmacyBranch ? apptForm.symptoms || null : null,
+      prescriptionText: isPharmacyBranch ? apptForm.prescriptionText || null : null,
+      species: isVetBranch ? apptForm.species : null,
+      animalCount: isVetBranch ? Number(apptForm.animalCount) : null,
+      villageOrFarm: isVetBranch ? apptForm.villageOrFarm || null : null,
+      treatmentNotes: isVetBranch ? apptForm.treatmentNotes || null : null,
+      diagnosis: apptForm.diagnosis || null,
+      followUpDate: apptForm.followUpDate || null,
+      reminderSent: false,
+    });
 
-      setShowApptModal(false);
-      setApptForm((prev) => ({
-        ...prev,
-        patientOrOwner: '',
-        phone: '',
-        patientAge: '',
-        symptoms: '',
-        prescriptionText: '',
-        villageOrFarm: '',
-        treatmentNotes: '',
-        diagnosis: '',
-        followUpDate: '',
-      }));
-      await loadData();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to save appointment on server.');
-    }
+    setShowApptModal(false);
+    setApptForm((prev) => ({
+      ...prev,
+      patientOrOwner: '',
+      phone: '',
+      patientAge: '',
+      symptoms: '',
+      prescriptionText: '',
+      villageOrFarm: '',
+      treatmentNotes: '',
+      diagnosis: '',
+      followUpDate: '',
+    }));
+    await loadData();
   };
 
-  const handleStatusChange = async (apptId: string, nextStatus: any) => {
-    try {
-      await appointmentsApi.updateAppointmentStatus(apptId, { status: nextStatus });
-      await loadData();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to update appointment status.');
-    }
+  const handleStatusChange = async (apptId: string, nextStatus: AppointmentStatusType) => {
+    await updateOfflineAppointmentStatus({ appointmentId: apptId, status: nextStatus });
+    await loadData();
   };
 
   const handleSendReminder = async (
-    appt: ServerAppointment,
+    appt: OfflineAppointmentRecord,
     channel: 'whatsapp' | 'sms'
   ) => {
     const links = buildAppointmentReminderLinks(
@@ -208,15 +200,12 @@ export const AppointmentsPage: React.FC = () => {
       (i18n.language as 'en' | 'so') || 'en'
     );
     window.open(channel === 'whatsapp' ? links.whatsappUrl : links.smsUrl, '_blank');
-    try {
-      await appointmentsApi.updateAppointmentStatus(appt.id, {
-        status: appt.status,
-        reminderSent: true,
-      });
-      await loadData();
-    } catch {
-      // non-blocking
-    }
+    await updateOfflineAppointmentStatus({
+      appointmentId: appt.id,
+      status: appt.status,
+      reminderSent: true,
+    });
+    await loadData();
   };
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -225,39 +214,32 @@ export const AppointmentsPage: React.FC = () => {
     const targetBranch =
       activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId;
 
-    try {
-      await appointmentsApi.createTask({
-        branchId: targetBranch,
-        title: taskForm.title,
-        description: taskForm.description || undefined,
-        assignedToId: user.id,
-        status: 'TODO',
-        priority: taskForm.priority as any,
-        dueDate: taskForm.dueDate ? new Date(taskForm.dueDate).toISOString() : undefined,
-      });
+    await createOfflineTask({
+      branchId: targetBranch,
+      title: taskForm.title,
+      description: taskForm.description || null,
+      assignedToId: user.id,
+      assignedToName: taskForm.assignedToName || user.fullName,
+      createdById: user.id,
+      status: 'OPEN',
+      priority: taskForm.priority,
+      dueDate: taskForm.dueDate || null,
+    });
 
-      setShowTaskModal(false);
-      setTaskForm({
-        title: '',
-        description: '',
-        assignedToName: user.fullName,
-        priority: 'MEDIUM',
-        dueDate: new Date().toISOString().slice(0, 10),
-      });
-      await loadData();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to create task on server.');
-    }
+    setShowTaskModal(false);
+    setTaskForm({
+      title: '',
+      description: '',
+      assignedToName: user.fullName,
+      priority: 'MEDIUM',
+      dueDate: new Date().toISOString().slice(0, 10),
+    });
+    await loadData();
   };
 
-  const handleTaskStatusChange = async (taskId: string, status: any) => {
-    const serverStatus = status === 'OPEN' ? 'TODO' : status;
-    try {
-      await appointmentsApi.updateTaskStatus(taskId, { status: serverStatus });
-      await loadData();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to update task status.');
-    }
+  const handleTaskStatusChange = async (taskId: string, status: TaskStatusType) => {
+    await updateOfflineTaskStatus(taskId, status);
+    await loadData();
   };
 
   return (
