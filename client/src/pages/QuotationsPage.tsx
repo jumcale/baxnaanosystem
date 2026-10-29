@@ -32,6 +32,8 @@ export const QuotationsPage: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [convertedReceipt, setConvertedReceipt] = useState<OfflineReceiptData | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [form, setForm] = useState(() => {
     const saved = getSavedBranchSettingsSync(activeBranchId);
@@ -80,56 +82,97 @@ export const QuotationsPage: React.FC = () => {
     return () => window.removeEventListener('baxnaano:data-synced', refresh);
   }, [activeBranchId]);
 
-  const handleAddLineItem = () => {
+  const buildLineItemFromSelection = () => {
     const prod = products.find((p) => p.id === form.selectedProductId);
-    if (!prod) return;
-    setForm((prev) => ({
-      ...prev,
-      items: [
-        ...prev.items,
-        {
-          productId: prod.id,
-          productName: String(prod.name),
-          sku: String(prod.sku),
-          quantity: Number(prev.selectedQty),
-          unitPriceUsd: Number(prod.sellPriceUsd),
-        },
-      ],
-    }));
+    if (!prod) return null;
+    return {
+      productId: prod.id,
+      productName: String(prod.name),
+      sku: String(prod.sku),
+      quantity: Math.max(1, Number(form.selectedQty) || 1),
+      unitPriceUsd: Number(prod.sellPriceUsd),
+    };
+  };
+
+  const handleAddLineItem = () => {
+    const line = buildLineItemFromSelection();
+    if (!line) {
+      setFormError('Please select a product first.');
+      return;
+    }
+    setFormError(null);
+    setForm((prev) => {
+      const existingIdx = prev.items.findIndex((i) => i.productId === line.productId);
+      const nextItems =
+        existingIdx >= 0
+          ? prev.items.map((i, idx) =>
+              idx === existingIdx ? { ...i, quantity: i.quantity + line.quantity } : i
+            )
+          : [...prev.items, line];
+      return { ...prev, items: nextItems, selectedProductId: '', selectedQty: 1 };
+    });
+  };
+
+  const handleRemoveLineItem = (idx: number) => {
+    setForm((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }));
   };
 
   const handleSaveQuotation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || form.items.length === 0) return;
+    setFormError(null);
 
-    const firstProd = products.find((p) => p.id === form.items[0].productId);
+    if (!user) {
+      setFormError('You must be signed in to save a quotation.');
+      return;
+    }
+
+    // Auto-include a product that was selected but not yet added with "+"
+    let items = form.items;
+    const pendingLine = buildLineItemFromSelection();
+    if (pendingLine && !items.some((i) => i.productId === pendingLine.productId)) {
+      items = [...items, pendingLine];
+    }
+
+    if (items.length === 0) {
+      setFormError('Add at least one product to the quotation.');
+      return;
+    }
+
+    const firstProd = products.find((p) => p.id === items[0].productId);
     const targetBranch =
       activeBranchId === 'ALL'
         ? String(firstProd?.branchId || BAXNAANO_BRANCHES.B1.id)
         : activeBranchId;
 
-    await createOfflineQuotation({
-      branchId: targetBranch,
-      customerName: form.customerName,
-      customerPhone: form.customerPhone,
-      exchangeRateUsed: form.exchangeRateUsed,
-      discountUsd: form.discountUsd,
-      validUntil: form.validUntil,
-      userId: user.id,
-      items: form.items,
-    });
+    setIsSaving(true);
+    try {
+      await createOfflineQuotation({
+        branchId: targetBranch,
+        customerName: form.customerName.trim() || 'Walk-in',
+        customerPhone: form.customerPhone.trim(),
+        exchangeRateUsed: form.exchangeRateUsed,
+        discountUsd: form.discountUsd,
+        validUntil: form.validUntil,
+        userId: user.id,
+        items,
+      });
 
-    setShowCreateModal(false);
-    setForm((prev) => ({
-      ...prev,
-      customerName: '',
-      customerPhone: '',
-      discountUsd: 0,
-      selectedProductId: '',
-      selectedQty: 1,
-      items: [],
-    }));
-    await loadQuotations();
+      setShowCreateModal(false);
+      setForm((prev) => ({
+        ...prev,
+        customerName: '',
+        customerPhone: '',
+        discountUsd: 0,
+        selectedProductId: '',
+        selectedQty: 1,
+        items: [],
+      }));
+      await loadQuotations();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to save quotation.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleShareWhatsApp = (q: Record<string, unknown>) => {
@@ -242,98 +285,131 @@ export const QuotationsPage: React.FC = () => {
         })}
       </div>
 
-      {/* Create Quotation Modal */}
+      {/* Create Quotation Modal — mobile-friendly, scrollable body with sticky action footer */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center sm:p-4">
           <form
             onSubmit={handleSaveQuotation}
-            className="bg-white dark:bg-slate-800 p-6 rounded-2xl max-w-lg w-full space-y-4"
+            className="bg-white dark:bg-slate-800 rounded-t-2xl sm:rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden"
           >
-            <h2 className="text-lg font-bold">{t('quotations.create_quote')}</h2>
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                required
-                placeholder="Customer Name"
-                value={form.customerName}
-                onChange={(e) => setForm({ ...form, customerName: e.target.value })}
-                className="min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
-              />
-              <input
-                required
-                placeholder="WhatsApp Phone (+252...)"
-                value={form.customerPhone}
-                onChange={(e) => setForm({ ...form, customerPhone: e.target.value })}
-                className="min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
-              />
+            <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
+              <h2 className="text-lg font-bold">{t('quotations.create_quote')}</h2>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold mb-1">
-                {t('quotations.valid_until')}
-              </label>
-              <input
-                type="date"
-                required
-                value={form.validUntil}
-                onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
-                className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <select
-                value={form.selectedProductId}
-                onChange={(e) => setForm({ ...form, selectedProductId: e.target.value })}
-                className="flex-1 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900 text-sm"
-              >
-                <option value="">-- Select Product --</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {String(p.name)} (${Number(p.sellPriceUsd).toFixed(2)})
-                  </option>
-                ))}
-              </select>
-              <NumericInput
-                min={1}
-                value={form.selectedQty}
-                onChange={(val) => setForm({ ...form, selectedQty: Math.max(1, val) })}
-                className="w-20 min-h-[44px] px-2 border rounded-xl text-center dark:bg-slate-900"
-              />
-              <button
-                type="button"
-                onClick={handleAddLineItem}
-                className="px-4 bg-emerald-600 text-white rounded-xl font-bold"
-              >
-                +
-              </button>
-            </div>
-
-            <div className="space-y-1 text-xs">
-              {form.items.map((item, idx) => (
-                <div key={idx} className="flex justify-between p-2 bg-slate-100 dark:bg-slate-900 rounded">
-                  <span>
-                    {item.productName} x {item.quantity}
-                  </span>
-                  <span className="font-bold">
-                    ${(item.quantity * item.unitPriceUsd).toFixed(2)}
-                  </span>
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
+              {formError && (
+                <div className="p-3 bg-red-50 border border-red-300 text-red-700 rounded-xl text-xs font-semibold">
+                  {formError}
                 </div>
-              ))}
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  placeholder="Customer Name"
+                  value={form.customerName}
+                  onChange={(e) => setForm({ ...form, customerName: e.target.value })}
+                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                />
+                <input
+                  type="tel"
+                  placeholder="WhatsApp Phone (+252...)"
+                  value={form.customerPhone}
+                  onChange={(e) => setForm({ ...form, customerPhone: e.target.value })}
+                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  {t('quotations.valid_until')}
+                </label>
+                <input
+                  type="date"
+                  value={form.validUntil}
+                  onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
+                  className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                />
+              </div>
+
+              {/* Product picker: select on its own row, qty + add on the next row (no overflow on phones) */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold">Add Product</label>
+                <select
+                  value={form.selectedProductId}
+                  onChange={(e) => setForm({ ...form, selectedProductId: e.target.value })}
+                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900 text-sm"
+                >
+                  <option value="">-- Select Product --</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {String(p.name)} (${Number(p.sellPriceUsd).toFixed(2)})
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-500 shrink-0">Qty</span>
+                  <NumericInput
+                    min={1}
+                    value={form.selectedQty}
+                    onChange={(val) => setForm({ ...form, selectedQty: Math.max(1, val) })}
+                    className="flex-1 min-w-0 min-h-[44px] px-2 border rounded-xl text-center dark:bg-slate-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddLineItem}
+                    className="min-h-[44px] px-5 bg-emerald-600 text-white rounded-xl font-bold shrink-0"
+                  >
+                    + Add
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 text-xs">
+                {form.items.length === 0 ? (
+                  <div className="text-center py-3 text-slate-400">No products added yet.</div>
+                ) : (
+                  form.items.map((item, idx) => (
+                    <div
+                      key={`${item.productId}-${idx}`}
+                      className="flex items-center justify-between gap-2 p-2 bg-slate-100 dark:bg-slate-900 rounded"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {item.productName} x {item.quantity}
+                      </span>
+                      <span className="font-bold shrink-0">
+                        ${(item.quantity * item.unitPriceUsd).toFixed(2)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLineItem(idx)}
+                        className="w-8 h-8 shrink-0 rounded-lg text-red-600 hover:bg-red-50 font-bold"
+                        aria-label="Remove item"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
 
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 px-4 sm:px-6 py-3 border-t border-slate-200 dark:border-slate-700 shrink-0 bg-white dark:bg-slate-800">
               <button
                 type="button"
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => {
+                  setFormError(null);
+                  setShowCreateModal(false);
+                }}
                 className="min-h-[44px] px-4 py-2 border rounded-xl"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="min-h-[44px] px-5 py-2 bg-emerald-600 text-white font-semibold rounded-xl"
+                disabled={isSaving}
+                className="min-h-[44px] px-5 py-2 bg-emerald-600 disabled:bg-slate-400 text-white font-semibold rounded-xl"
               >
-                Save Quotation
+                {isSaving ? 'Saving...' : 'Save Quotation'}
               </button>
             </div>
           </form>

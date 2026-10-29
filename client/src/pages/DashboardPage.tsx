@@ -108,8 +108,11 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* Primary Financial KPI Grid (4 Balanced Cards) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* Card 1: Today's Sales */}
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${
+          user?.role !== 'ADMIN' && activeBranchId !== 'ALL' ? 'xl:grid-cols-4' : 'xl:grid-cols-3'
+        }`}
+      >
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -153,7 +156,8 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 3: Today's Net Profit */}
+        {/* Card 3: Today's Net Profit (hidden for Admin / All Branches view) */}
+        {user?.role !== 'ADMIN' && activeBranchId !== 'ALL' && (
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -177,6 +181,7 @@ export const DashboardPage: React.FC = () => {
             </button>
           </div>
         </div>
+        )}
 
         {/* Card 4: Payment Channel Split */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm">
