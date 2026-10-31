@@ -9,6 +9,7 @@ import {
   BAXNAANO_BRANCHES,
   hasPermission,
   canAccessModule,
+  ROLE_PERMISSIONS,
 } from '@baxnaano/shared';
 import { app } from '../index';
 import { signAccessToken } from '../middleware/auth';
@@ -75,6 +76,23 @@ describe('1. FEFO Stock Allocation & Expired Batch Blocking Engine', () => {
     expect(result.allocations).toHaveLength(0);
   });
 
+  it('returns INSUFFICIENT_STOCK when non-expired stock is less than requested quantity', () => {
+    const batches = [
+      {
+        id: 'batch-low',
+        batchNumber: 'LOW-001',
+        expiryDate: '2027-01-01T00:00:00Z',
+        availableQuantity: 5,
+        buyPriceUsd: 2.0,
+        sellPriceUsd: 3.5,
+      },
+    ];
+
+    const result = allocateStockFEFO(batches, 10, referenceToday);
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe('INSUFFICIENT_STOCK');
+  });
+
   it('classifies 30, 60, and 90 day expiry buckets accurately', () => {
     expect(classifyExpiryBucket('2026-10-15', referenceToday).bucket).toBe('EXPIRED');
     expect(classifyExpiryBucket('2026-11-10', referenceToday).bucket).toBe('DAYS_30');
@@ -136,14 +154,17 @@ describe('3. Multi-Currency USD & SLSH Conversion', () => {
   });
 });
 
-describe('4. RBAC & Multi-Branch API Isolation Integration Tests', () => {
-  it('enforces RBAC module visibility per role', () => {
+describe('4. RBAC Matrix & Multi-Branch API Isolation Integration Tests', () => {
+  it('enforces RBAC module visibility and permissions per role', () => {
     expect(canAccessModule('CASHIER', 'SALES_POINT')).toBe(true);
     expect(canAccessModule('CASHIER', 'INVENTORY')).toBe(false);
     expect(canAccessModule('PHARMACIST', 'INVENTORY')).toBe(true);
     expect(canAccessModule('PHARMACIST', 'SALES_POINT')).toBe(false);
+    expect(canAccessModule('PHARMACIST', 'APPOINTMENTS')).toBe(true);
+    expect(canAccessModule('VET_OFFICER', 'INVENTORY')).toBe(true);
     expect(hasPermission('BRANCH_MANAGER', 'expenses:approve')).toBe(true);
     expect(hasPermission('CASHIER', 'expenses:approve')).toBe(false);
+    expect(hasPermission('ADMIN', 'reports:view')).toBe(true);
   });
 
   it('checks /api/health status reporting ok or degraded based on db connectivity', async () => {
@@ -158,7 +179,7 @@ describe('4. RBAC & Multi-Branch API Isolation Integration Tests', () => {
     expect(res.status).toBe(401);
   });
 
-  it('prevents vet_b2 (B2 Arabsiyo Vet) from accessing vet_b3 (B3 Gabiley Vet) data (403 CROSS_BRANCH_ACCESS_DENIED)', async () => {
+  it('prevents vet_b2 (B2 Arabsiyo Vet) from accessing vet_b3 (B3 Gabiley Vet) data via query param (403 CROSS_BRANCH_ACCESS_DENIED)', async () => {
     const vetB2Token = signAccessToken({
       id: 'user-vet-b2',
       username: 'vet_b2',
@@ -174,6 +195,32 @@ describe('4. RBAC & Multi-Branch API Isolation Integration Tests', () => {
     const res = await request(app)
       .get(`/api/inventory/products?branchId=${BAXNAANO_BRANCHES.B3.id}`)
       .set('Authorization', `Bearer ${vetB2Token}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('CROSS_BRANCH_ACCESS_DENIED');
+  });
+
+  it('prevents a non-admin user from submitting body branchId for another branch (403 CROSS_BRANCH_ACCESS_DENIED)', async () => {
+    const b1CashierToken = signAccessToken({
+      id: 'user-b1-cashier',
+      username: 'cashier_b1',
+      fullName: 'Nimco',
+      role: 'CASHIER',
+      branchId: BAXNAANO_BRANCHES.B1.id,
+      branchCode: 'B1',
+      branchType: 'PHARMACY',
+      permissions: ['sales:create'],
+      language: 'so',
+    });
+
+    const res = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${b1CashierToken}`)
+      .send({
+        branchId: BAXNAANO_BRANCHES.B2.id, // Tampering with branchId
+        items: [{ productId: 'p1', quantity: 1, unitPriceUsd: 10 }],
+        payments: [{ method: 'CASH', currency: 'USD', amountOriginal: 10 }],
+      });
 
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('CROSS_BRANCH_ACCESS_DENIED');

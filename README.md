@@ -4,7 +4,7 @@
 
 # Baxnaano Pharmacy & Veterinary Clinic Management System
 
-Production-ready, **Offline-First Multi-Branch PWA** built for **Baxnaano Pharmacy & Veterinary Clinic** across Somaliland:
+Production-ready, **Authoritative Online-Only Multi-Branch PWA** built for **Baxnaano Pharmacy & Veterinary Clinic** across Somaliland:
 
 | Branch ID | Branch Name | Type | Location |
 | :--- | :--- | :--- | :--- |
@@ -16,19 +16,25 @@ Production-ready, **Offline-First Multi-Branch PWA** built for **Baxnaano Pharma
 
 ## Key Architecture Highlights
 
-1. **Strict Multi-Branch Isolation & Admin Consolidated Scope**:
-   - Every table carries `branchId`.
-   - Branch users (`Branch Manager`, `Cashier`, `Pharmacist`, `Vet Officer`) are strictly locked to their own branch (`B1`, `B2`, or `B3`) in both the API middleware and local IndexedDB.
+1. **Authoritative Online-Only Client-Server Architecture**:
+   - Zero local-first business data caching or IndexedDB replication. All reads and mutations hit the authoritative Express API and PostgreSQL database.
+   - PWA remains installable for quick launch, but service worker caches strictly static application shell assets (`js`, `css`, `html`, `svg`), never `/api/` endpoints.
+   - Persistent online connectivity indicator and top banner pause mutation buttons when offline to guarantee data integrity across devices.
+2. **Strict Multi-Branch Isolation & Admin Consolidated Scope**:
+   - Every domain record carries an immutable `branchId`.
+   - Branch users (`Branch Manager`, `Cashier`, `Pharmacist`, `Vet Officer`) are strictly locked to their own branch (`B1`, `B2`, or `B3`) via server middleware (`enforceBranchScope`), rejecting any cross-branch tampering attempts with `403 CROSS_BRANCH_ACCESS_DENIED`.
    - `Admin` users can view consolidated data across **All Branches (`ALL`)**, filter by individual branch, and compare branches side-by-side.
-2. **Offline-First IndexedDB (Dexie) + Background Sync Queue**:
-   - All writes go to local IndexedDB first (`client/src/db/dexie.ts`), then enqueue into `syncQueue` with exponential backoff + jitter (`client/src/services/sync.engine.ts`).
-   - **Ledger-Based Stock**: Stock is never overwritten during sync conflicts; batch stock is always computed as `SUM(quantityDelta)` from `StockMovement`.
-3. **FEFO (First Expiry, First Out) & Expired Batch Blocking**:
-   - Shared pure allocator (`shared/src/inventory.ts`) automatically deducts from the earliest expiring batch and strictly blocks expired batches.
+3. **FEFO (First Expiry, First Out) & Stock Allocation**:
+   - Shared pure allocator (`shared/src/inventory.ts`) and database transactions allocate stock from earliest expiring batches first and strictly reject expired batches.
+   - Ledger-based stock movements (`StockMovement`) track every unit delta with idempotent client-generated UUIDs preventing double-submits.
 4. **Dual Currency (`USD` & `SLSH`) & Split Payments**:
-   - Supports **Cash**, **EVC Plus**, **Zaad**, **eDahab**, and **Customer Credit** in `USD` or `SLSH` with configurable exchange rates and **58mm / 80mm thermal & PDF receipts**.
-5. **Bilingual Interface (`English` Primary & `Af-Soomaali` Secondary)**:
-   - Every string is powered by `i18next` (`client/src/i18n/index.ts`) with English (`en`) as the primary default language and instant switching to Somali (`so`).
+   - Supports **Cash**, **EVC Plus**, **Zaad**, **eDahab**, and **Customer Credit** in `USD` or `SLSH` with configurable exchange rates and thermal/PDF receipts.
+5. **Hardened Security & Session Management**:
+   - Short-lived JWT access tokens stored **in memory only** (never in `localStorage`).
+   - Long-lived session rehydration via `HttpOnly`, `SameSite=Strict` refresh cookies.
+   - Login rate-limiting and mandatory temporary password reset on first login (`mustChangePassword: true`).
+6. **Bilingual Interface (`English` Primary & `Af-Soomaali` Secondary)**:
+   - Every string is powered by `i18next` with English (`en`) as the primary default language and instant switching to Somali (`so`).
 
 ---
 
@@ -43,8 +49,11 @@ Production-ready, **Offline-First Multi-Branch PWA** built for **Baxnaano Pharma
 cp .env.example .env
 ```
 
-On Windows, copy `.env.example` to `.env` in File Explorer or PowerShell. The Prisma
-commands and server both load this root `.env` file.
+Set valid secrets in `.env`:
+- `JWT_ACCESS_SECRET` (≥ 32 characters)
+- `JWT_REFRESH_SECRET` (≥ 32 characters)
+- `CORS_ORIGIN` (e.g. `http://localhost:5173`)
+- `DATABASE_URL` (points to local postgres)
 
 ### 3. Install Dependencies & Generate Prisma Client
 ```bash
@@ -57,6 +66,7 @@ npm run db:generate
 npm run db:migrate
 npm run db:seed
 ```
+*Note: Seeding generates random temporary passwords printed once in the console table. All accounts require password change on first login.*
 
 ### 5. Start Development Servers (Backend + PWA Frontend)
 ```bash
@@ -64,19 +74,6 @@ npm run dev
 ```
 - **PWA Frontend**: `http://localhost:5173`
 - **Express API**: `http://localhost:4000/api`
-
----
-
-## Default Seeded Accounts (Password: `Password123!`)
-
-| Username | Role | Branch Scope |
-| :--- | :--- | :--- |
-| `admin` | `ADMIN` | All Branches (`B1`, `B2`, `B3` + Consolidated `ALL`) |
-| `manager_b1` | `BRANCH_MANAGER` | `B1` — Baxnaano Pharmacy (Arabsiyo) |
-| `manager_b2` | `BRANCH_MANAGER` | `B2` — Baxnaano Veterinary (Arabsiyo) |
-| `vet_b2` | `VET_OFFICER` | `B2` — Baxnaano Veterinary (Arabsiyo) — Isolated User & Branch Scope |
-| `vet_b3` | `VET_OFFICER` | `B3` — Baxnaano Veterinary (Gabiley) — Isolated User & Branch Scope |
-| `cashier_b3` | `CASHIER` | `B3` — Baxnaano Veterinary (Gabiley) |
 
 ---
 

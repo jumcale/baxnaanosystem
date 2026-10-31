@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'refactor/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: baxnaano
+          POSTGRES_PASSWORD: baxnaano_secret_password
+          POSTGRES_DB: baxnaano_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Generate Prisma Client
+        run: npm run prisma:generate -w server
+        env:
+          DATABASE_URL: postgresql://baxnaano:baxnaano_secret_password@localhost:5432/baxnaano_test?schema=public
+
+      - name: Typecheck all workspaces
+        run: |
+          npm run build -w shared
+          npm run build -w server
+          npx tsc --noEmit -p client
+
+      - name: Run server test suite
+        run: npm run test -w server
+        env:
+          DATABASE_URL: postgresql://baxnaano:baxnaano_secret_password@localhost:5432/baxnaano_test?schema=public
+          JWT_ACCESS_SECRET: 0123456789abcdef0123456789abcdef
+          JWT_REFRESH_SECRET: fedcba9876543210fedcba9876543210
+          CORS_ORIGIN: http://localhost:5173
+
+      - name: Run client test suite
+        run: npm run test -w client
+
+      - name: Build client production bundle
+        run: npm run build -w client
