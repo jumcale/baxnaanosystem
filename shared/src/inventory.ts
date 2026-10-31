@@ -153,7 +153,7 @@ export const CreateTransferSchema = z.object({
 
 // ----------------------------------------------------------------------------
 // PURE FEFO (FIRST EXPIRY, FIRST OUT) ALLOCATION & EXPIRY ENGINE
-// Shared between Client Offline POS/Inventory and Server Transaction Engine
+// Shared between Client POS/Inventory and Server Transaction Engine
 // ----------------------------------------------------------------------------
 
 export interface BatchCandidate {

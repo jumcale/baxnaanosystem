@@ -135,7 +135,7 @@ salesRouter.post(
           const effectiveProductId = product.id;
 
           if (reqItem.batchId) {
-            // Explicit batch provided (e.g. chosen or allocated offline)
+            // Explicit batch provided (e.g. chosen or allocated)
             let batch = await tx.productBatch.findFirst({
               where: {
                 id: reqItem.batchId,

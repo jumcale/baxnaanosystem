@@ -153,7 +153,7 @@ export const CreateExpenseSchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS).default('CASH'),
   payee: z.string().min(2).max(120),
   description: z.string().max(500).optional().nullable(),
-  receiptPhotoData: z.string().optional().nullable(), // Base64 offline photo
+  receiptPhotoData: z.string().optional().nullable(), // Base64 receipt photo
   isRecurring: z.boolean().default(false),
   recurringFrequency: z.enum(['DAILY', 'WEEKLY', 'MONTHLY']).optional().nullable(),
   expenseDate: z.string().optional(),
