@@ -15,7 +15,6 @@ import { expensesRouter } from './routes/expenses.routes';
 import { quotationsRouter } from './routes/quotations.routes';
 import { appointmentsRouter } from './routes/appointments.routes';
 import { reportsRouter } from './routes/reports.routes';
-import { syncRouter } from './routes/sync.routes';
 import { prisma } from './config/db';
 
 export const app = express();
@@ -81,7 +80,6 @@ app.use('/api/expenses', expensesRouter);
 app.use('/api/quotations', quotationsRouter);
 app.use('/api/appointments', appointmentsRouter);
 app.use('/api/reports', reportsRouter);
-app.use('/api/sync', syncRouter);
 
 // Serve Built React Vite PWA (`client/dist`) in Staging & Production
 const clientDistCandidates = [

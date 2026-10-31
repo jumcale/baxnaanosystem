@@ -33,6 +33,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff2}'],
+        navigateFallbackDenylist: [/^\/api\//],
         // Pure Online-Only: No caching of /api/ endpoints to prevent stale data
         runtimeCaching: [],
       },

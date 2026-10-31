@@ -34,7 +34,7 @@ salesRouter.use(authenticateJWT);
 /**
  * POST /api/sales
  * Atomic POS Checkout:
- * 1. Idempotent by sale UUID (`id`) for safe offline-first sync replay.
+ * 1. Idempotent by sale UUID (`id`) for safe network retry and duplicate submit prevention.
  * 2. Allocates stock using FEFO (First Expiry, First Out) or verifies explicit non-expired batch.
  * 3. Blocks expired batches strictly.
  * 4. Appends negative `SALE` StockMovement entries to the ledger.
@@ -54,10 +54,9 @@ salesRouter.post(
       }
 
       const data = parsed.data;
-      const isOfflineSyncReplay = req.headers['x-offline-sync'] === 'true';
 
       const result = await prisma.$transaction(async (tx) => {
-        // 1. Idempotency check (if offline client synced this sale already)
+        // 1. Idempotency check (if client retries same sale UUID across network disconnects)
         if (data.id) {
           const existingSale = await tx.sale.findUnique({
             where: { id: data.id },
@@ -95,7 +94,7 @@ salesRouter.post(
         for (const reqItem of data.items) {
           const lineDiscountUsd = Number(reqItem.discountUsd || 0);
 
-          // Ensure Product exists on server (supports offline-created or legacy-seeded products)
+          // Ensure Product exists on server
           let product = await tx.product.findFirst({
             where: { id: reqItem.productId, deletedAt: null },
           });
@@ -157,65 +156,23 @@ salesRouter.post(
             }
 
             if (!batch) {
-              const fallbackBatchNum =
-                reqItem.batchNumber || `BATCH-${reqItem.batchId.slice(0, 6).toUpperCase()}`;
-              const fallbackExpiry = reqItem.expiryDate
-                ? new Date(reqItem.expiryDate)
-                : new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
-              const buyPrice =
-                reqItem.unitBuyPriceUsd ?? Number(product.buyPriceUsd || reqItem.unitPriceUsd * 0.65);
-
-              batch = await tx.productBatch.upsert({
-                where: {
-                  branchId_productId_batchNumber: {
-                    branchId: data.branchId,
-                    productId: effectiveProductId,
-                    batchNumber: fallbackBatchNum,
-                  },
-                },
-                update: {},
-                create: {
-                  id: reqItem.batchId,
-                  branchId: data.branchId,
-                  productId: effectiveProductId,
-                  batchNumber: fallbackBatchNum,
-                  expiryDate: fallbackExpiry,
-                  buyPriceUsd: buyPrice,
-                  sellPriceUsd: reqItem.unitPriceUsd,
-                  cachedQuantity: Math.max(100, reqItem.quantity),
-                },
-              });
-
-              await tx.stockMovement.create({
-                data: {
-                  branchId: data.branchId,
-                  productId: effectiveProductId,
-                  batchId: batch.id,
-                  userId: req.user!.id,
-                  type: StockMovementType.INITIAL_STOCK,
-                  quantityDelta: Math.max(100, reqItem.quantity),
-                  unitCostUsd: buyPrice,
-                  reason: 'Auto-synced offline batch initial stock',
-                },
-              });
+              throw new Error(`BATCH_NOT_FOUND:${reqItem.batchId || reqItem.batchNumber || ''}`);
             }
 
             const { bucket } = classifyExpiryBucket(batch.expiryDate);
-            if (bucket === 'EXPIRED' && !isOfflineSyncReplay) {
+            if (bucket === 'EXPIRED') {
               throw new Error(`EXPIRED_BATCH_BLOCKED:${batch.batchNumber}`);
             }
 
-            if (!isOfflineSyncReplay) {
-              const availableQty = await recalculateBatchBalanceFromLedger(
-                tx,
-                data.branchId,
-                batch.id
+            const availableQty = await recalculateBatchBalanceFromLedger(
+              tx,
+              data.branchId,
+              batch.id
+            );
+            if (availableQty < reqItem.quantity) {
+              throw new Error(
+                `INSUFFICIENT_STOCK:${batch.batchNumber}:available=${availableQty}`
               );
-              if (availableQty < reqItem.quantity) {
-                throw new Error(
-                  `INSUFFICIENT_STOCK:${batch.batchNumber}:available=${availableQty}`
-                );
-              }
             }
 
             const lineTotal = Number(
@@ -367,8 +324,7 @@ salesRouter.post(
               !data.approvedById &&
               req.user!.role !== 'ADMIN' &&
               req.user!.role !== 'BRANCH_MANAGER' &&
-              req.user!.role !== 'VET_OFFICER' &&
-              !isOfflineSyncReplay
+              req.user!.role !== 'VET_OFFICER'
             ) {
               throw new Error(
                 `CREDIT_LIMIT_EXCEEDED:limit=${customer.creditLimitUsd}:newBalance=${newBalance.toFixed(
@@ -456,7 +412,6 @@ salesRouter.post(
             referenceId: sale.id,
             referenceType: 'SALE',
             reason: `POS Sale #${receiptNumber}`,
-            allowNegativeInOfflineSync: isOfflineSyncReplay,
           });
         }
 

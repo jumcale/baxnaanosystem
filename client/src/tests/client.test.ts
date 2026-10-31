@@ -7,7 +7,6 @@ import {
   usdToSlsh,
   slshToUsd,
 } from '@baxnaano/shared';
-import { getSavedBranchSettingsSync } from '../services/settings.offline';
 
 describe('Baxnaano Client PWA Bilingual & Multi-Branch Verification', () => {
   it('provides complete Somali (so) and English (en) translation dictionaries', () => {
@@ -43,11 +42,10 @@ describe('Baxnaano Client PWA Bilingual & Multi-Branch Verification', () => {
     expect(canAccessModule('VET_OFFICER', 'REPORTS')).toBe(false);
   });
 
-  it('returns default branch settings synchronously when no custom settings exist', () => {
-    const settings = getSavedBranchSettingsSync(BAXNAANO_BRANCHES.B1.id);
-    expect(settings.exchangeRate).toBe(10000);
-    expect(settings.taxRate).toBe(0);
-    expect(settings.receiptHeader).toContain('Baxnaano');
+  it('configures default branch parameters in BAXNAANO_BRANCHES', () => {
+    const branchB1 = BAXNAANO_BRANCHES.B1;
+    expect(branchB1.code).toBe('B1');
+    expect(branchB1.name).toContain('Baxnaano');
+    expect(branchB1.type).toBe('PHARMACY');
   });
 });
-

@@ -23,6 +23,8 @@ import {
   BAXNAANO_BRANCHES,
 } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
+import { v4 as uuidv4 } from 'uuid';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import {
   inventoryApi,
   salesApi,
@@ -76,6 +78,8 @@ export const SalesPointPage: React.FC = () => {
   const [orderDiscountUsd, setOrderDiscountUsd] = useState<number>(0);
   const [prescriptionRef, setPrescriptionRef] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
+  const isOnline = useOnlineStatus();
+  const [currentSaleId, setCurrentSaleId] = useState<string>(() => uuidv4());
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [payments, setPayments] = useState<SplitPaymentRow[]>([
     {
@@ -341,9 +345,15 @@ export const SalesPointPage: React.FC = () => {
       return;
     }
 
+    if (!isOnline) {
+      setErrorBanner("Internet connection required. Offline sales are no longer supported. / Khad internet ah ayaa loo baahan yahay.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const serverSale = await salesApi.createSale({
+        id: currentSaleId,
         branchId: targetBranchId,
         customerId: selectedCustomerId || undefined,
         currency: 'USD',
@@ -368,6 +378,7 @@ export const SalesPointPage: React.FC = () => {
 
       const receipt = formatServerSaleToReceipt(serverSale);
       setCompletedReceipt(receipt);
+      setCurrentSaleId(uuidv4());
       await loadPosCatalog();
     } catch (err: any) {
       const msg = err?.message || 'Checkout failed. Ensure server connection is active.';
@@ -378,6 +389,7 @@ export const SalesPointPage: React.FC = () => {
   };
 
   const resetNewSale = () => {
+    setCurrentSaleId(uuidv4());
     setCart([]);
     setOrderDiscountUsd(0);
     setSelectedCustomerId('');
@@ -800,13 +812,18 @@ export const SalesPointPage: React.FC = () => {
 
           <button
             type="submit"
-            disabled={cart.length === 0 || isSubmitting}
+            disabled={cart.length === 0 || isSubmitting || !isOnline}
+            title={!isOnline ? "Internet connection required to record sales" : undefined}
             className="w-full min-h-[54px] bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-bold text-base rounded-xl shadow-md transition flex items-center justify-center gap-2"
           >
             {isSubmitting ? (
               <span>Processing Sale with Central Server...</span>
             ) : (
-              `${t('pos.complete_sale')} ($${totalUsd.toFixed(2)})`
+              !isOnline ? (
+                <span>Offline — Reconnect to Record Sale</span>
+              ) : (
+                `${t('pos.complete_sale')} ($${totalUsd.toFixed(2)})`
+              )
             )}
           </button>
         </form>

@@ -11,8 +11,6 @@
   },
   "dependencies": {
     "@baxnaano/shared": "*",
-    "dexie": "^4.0.4",
-    "dexie-react-hooks": "^1.1.7",
     "i18next": "^23.11.5",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.379.0",

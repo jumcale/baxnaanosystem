@@ -20,10 +20,12 @@ import {
   LogOut,
   Globe,
   Building2,
+  AlertTriangle,
 } from 'lucide-react';
 import { APP_MODULES, AppModule, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
 import { checkServerHealth } from '../api/client';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 
 const MODULE_ROUTE_CONFIG: Record<
   AppModule,
@@ -60,6 +62,7 @@ export const AppShellLayout: React.FC = () => {
     logout,
   } = useAuth();
 
+  const isOnline = useOnlineStatus();
   const [isServerHealthy, setIsServerHealthy] = useState<boolean>(true);
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(
@@ -242,6 +245,14 @@ export const AppShellLayout: React.FC = () => {
 
       {/* Main Workspace Column */}
       <div className="flex-1 flex flex-col min-w-0">
+        {(!isOnline || !isServerHealthy) && (
+          <div className="bg-amber-500 text-slate-950 font-bold px-4 py-2.5 text-center text-xs md:text-sm shadow-md flex items-center justify-center gap-2 sticky top-0 z-50">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-slate-950" />
+            <span>
+              Offline mode is no longer supported. Please reconnect to record sales or manage stock. / Habka khadka la'aanta lama taageero. Fadlan ku xidhnow internet-ka si aad wax u iibiso ama u maamusho alaabta.
+            </span>
+          </div>
+        )}
         {/* Sticky Top Utility Bar — Responsive Two-Row on Mobile, Single-Row on Desktop */}
         <header className="print:hidden sticky top-0 z-10 min-h-[4rem] py-2 px-3 md:px-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-slate-200/90 dark:border-slate-800 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 shrink-0">
           {/* Left / Bottom on Mobile: Branch Scope Selector / Indicator */}

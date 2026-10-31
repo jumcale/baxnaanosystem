@@ -358,7 +358,7 @@ inventoryRouter.post(
       );
 
       const result = await prisma.$transaction(async (tx) => {
-        // Idempotency check if offline client retries same purchase UUID
+        // Idempotency check if client retries same purchase UUID
         if (data.id) {
           const existingPurchase = await tx.purchase.findUnique({ where: { id: data.id } });
           if (existingPurchase) return existingPurchase;

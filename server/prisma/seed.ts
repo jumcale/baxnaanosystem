@@ -1,7 +1,11 @@
 import crypto from 'crypto';
+import path from 'path';
+import dotenv from 'dotenv';
 import { PrismaClient, BranchType, RoleName, Species, StockMovementType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { BAXNAANO_BRANCHES, ROLE_PERMISSIONS } from '@baxnaano/shared';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 // Guard: abort unless DATABASE_URL points strictly to localhost or 127.0.0.1
 const dbUrl = process.env.DATABASE_URL || '';

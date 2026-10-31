@@ -41,7 +41,7 @@ export async function recalculateBatchBalanceFromLedger(
 /**
  * Appends a single StockMovement entry inside a Prisma transaction and updates
  * the batch's cachedQuantity from the true ledger sum.
- * Idempotent by movement `id` (if offline client retries same movement UUID, returns existing).
+ * Idempotent by movement `id` (if client retries same movement UUID across disconnects, returns existing).
  */
 export async function appendStockMovement(
   tx: Prisma.TransactionClient,
@@ -57,7 +57,6 @@ export async function appendStockMovement(
     referenceId?: string;
     referenceType?: string;
     reason?: string;
-    allowNegativeInOfflineSync?: boolean;
   }
 ) {
   if (params.id) {
@@ -82,8 +81,8 @@ export async function appendStockMovement(
     throw new Error('BATCH_NOT_FOUND_IN_BRANCH');
   }
 
-  // Before deducting, check current ledger balance unless explicitly allowed during offline sync reconciliation
-  if (params.quantityDelta < 0 && !params.allowNegativeInOfflineSync) {
+  // Before deducting, strictly verify sufficient batch stock from authoritative ledger
+  if (params.quantityDelta < 0) {
     const currentLedgerQty = await recalculateBatchBalanceFromLedger(
       tx,
       params.branchId,
