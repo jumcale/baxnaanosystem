@@ -84,3 +84,4 @@ All local-first, offline database synchronization, and IndexedDB data caching ha
 - Canonical response schemas (`DashboardAnalyticsResponseSchema`, `ReceiptDataSchema`, `ExpenseRecordSchema`, `CustomerAgingSchema`, `ProductItemSchema`) are defined in `@baxnaano/shared`.
 - The client validates and parses all incoming payloads through these schemas.
 - In development and test modes, the server validates outbound payloads against these schemas to catch contract drift immediately.
+

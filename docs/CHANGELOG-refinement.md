@@ -66,3 +66,4 @@ Complete transition of Baxnaano Pharmacy & Veterinary Clinic Management System f
   - Added Docker `HEALTHCHECK` with `wget -qO- http://localhost:4000/api/health`.
 - **Structured Request Logging**: Created `server/src/middleware/logger.ts` outputting JSON access logs with automatic redaction of passwords, tokens, cookies, and secret keys.
 - **GitHub Actions CI**: Created `.github/workflows/ci.yml` verifying lint, typechecking, tests against PostgreSQL 16 container, and client build.
+
