@@ -5,7 +5,7 @@
 
 FROM node:20-alpine
 WORKDIR /app
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl wget
 
 # 1. Copy package manifests and Prisma schema (required by postinstall prisma:generate)
 COPY package.json package-lock.json* ./
@@ -26,5 +26,8 @@ RUN npm run build
 ENV NODE_ENV=production
 ENV PORT=4000
 EXPOSE 4000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:4000/api/health || exit 1
 
 CMD ["npm", "run", "start", "-w", "server"]

@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
+import { requestLogger } from './middleware/logger';
 import { authRouter } from './routes/auth.routes';
 import { branchesRouter } from './routes/branches.routes';
 import { inventoryRouter } from './routes/inventory.routes';
@@ -38,7 +39,9 @@ app.use(
   })
 );
 app.use(cookieParser());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(requestLogger);
 
 // Rate Limiting
 const apiLimiter = rateLimit({
