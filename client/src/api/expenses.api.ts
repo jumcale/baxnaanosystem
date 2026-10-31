@@ -4,29 +4,9 @@
  */
 
 import { apiRequest } from './client';
+import { ExpenseRecord, ExpenseRecordSchema } from '@baxnaano/shared';
 
-export interface ExpenseRecord {
-  id: string;
-  branchId: string;
-  category: string;
-  amountUsd: number;
-  amountOriginal?: number;
-  currencyPaid?: 'USD' | 'SLSH';
-  currency?: 'USD' | 'SLSH';
-  exchangeRateUsed: number;
-  paymentMethod?: string;
-  payee?: string;
-  description?: string | null;
-  receiptNumber?: string | null;
-  receiptPhotoData?: string | null;
-  recordedById?: string;
-  recordedBy?: { id: string; fullName: string };
-  approvedById?: string | null;
-  approvedBy?: { id: string; fullName: string };
-  approvalStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
-  expenseDate: string;
-  createdAt: string;
-}
+export type { ExpenseRecord };
 
 export const expensesApi = {
   /**
@@ -55,7 +35,8 @@ export const expensesApi = {
       `/expenses?${q.toString()}`,
       { headers }
     );
-    return res.expenses || [];
+    const expenses = res.expenses || [];
+    return expenses.map((e) => ExpenseRecordSchema.parse(e));
   },
 
   /**
@@ -78,7 +59,7 @@ export const expensesApi = {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return res.expense;
+    return ExpenseRecordSchema.parse(res.expense);
   },
 
   /**
@@ -95,6 +76,6 @@ export const expensesApi = {
         body: JSON.stringify({ status }),
       }
     );
-    return res.expense;
+    return ExpenseRecordSchema.parse(res.expense);
   },
 };

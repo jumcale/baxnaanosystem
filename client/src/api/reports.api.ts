@@ -3,96 +3,14 @@
  * Authoritative Reports & Analytics API
  */
 import { apiClient } from './client';
+import {
+  DashboardAnalyticsResponse,
+  DashboardAnalyticsResponseSchema,
+  ComprehensiveReportResponse,
+  ComprehensiveReportResponseSchema,
+} from '@baxnaano/shared';
 
-export interface DashboardAnalyticsResponse {
-  kpis: {
-    todaySalesUsd: number;
-    todayExpensesUsd: number;
-    todayGrossProfitUsd: number;
-    todayNetProfitUsd: number;
-    todayCashUsd: number;
-    todayMobileMoneyUsd: number;
-    todayCreditUsd: number;
-  };
-  alerts: {
-    lowStockCount: number;
-    expiredBatchesCount: number;
-    expiring30Count: number;
-    expiring60Count: number;
-    expiring90Count: number;
-    todayAppointmentsCount: number;
-    openTasksCount: number;
-  };
-  trend7Days: Array<{ date: string; salesUsd: number; profitUsd: number }>;
-  trend30Days: Array<{ date: string; salesUsd: number; profitUsd: number }>;
-  topSellingItems: Array<{
-    productId: string;
-    name: string;
-    sku: string;
-    quantitySold: number;
-    revenueUsd: number;
-  }>;
-  todayAppointments: any[];
-  branchComparison: Array<{
-    branchId: string;
-    code: string;
-    name: string;
-    type: string;
-    location: string;
-    todaySalesUsd: number;
-    monthSalesUsd: number;
-    monthProfitUsd: number;
-    monthNetProfitUsd: number;
-  }>;
-}
-
-export interface ComprehensiveReportResponse {
-  period: 'DAILY' | 'WEEKLY' | 'MONTHLY';
-  profitAndLoss: {
-    revenueUsd: number;
-    cogsUsd: number;
-    grossProfitUsd: number;
-    expensesUsd: number;
-    netProfitUsd: number;
-  };
-  stockValuation: {
-    totalCostValuationUsd: number;
-    totalRetailValuationUsd: number;
-    projectedMarginUsd: number;
-  };
-  fastMovers: Array<{
-    productId: string;
-    name: string;
-    sku: string;
-    quantitySold: number;
-    revenueUsd: number;
-  }>;
-  slowMovers: Array<{
-    productId: string;
-    name: string;
-    sku: string;
-    currentStock: number;
-    valuationUsd: number;
-  }>;
-  creditAgingTotals: {
-    totalDueUsd: number;
-    bucket0to30Usd: number;
-    bucket31to60Usd: number;
-    bucket60PlusUsd: number;
-  };
-  appointmentsSummary: {
-    total: number;
-    done: number;
-    booked: number;
-    cancelledOrNoShow: number;
-  };
-  staffPerformance: Array<{
-    staffId: string;
-    name: string;
-    transactionCount: number;
-    totalRevenueUsd: number;
-  }>;
-}
+export type { DashboardAnalyticsResponse, ComprehensiveReportResponse };
 
 export interface ServerAuditLog {
   id: string;
@@ -113,25 +31,26 @@ export const reportsApi = {
   async getDashboard(branchId?: string): Promise<DashboardAnalyticsResponse> {
     const headers = branchId && branchId !== 'ALL' ? { 'x-branch-id': branchId } : undefined;
     const res = await apiClient.get<any>('/reports/dashboard', { headers });
-    const kpi = res.kpi || {};
-    return {
+    const kpis = res.kpis || res.kpi || {};
+    const alerts = res.alerts || {};
+    const formatted: DashboardAnalyticsResponse = {
       kpis: {
-        todaySalesUsd: Number(kpi.todaySalesUsd || 0),
-        todayExpensesUsd: Number(kpi.todayExpensesUsd || 0),
-        todayGrossProfitUsd: Number(kpi.todayGrossProfitUsd || 0),
-        todayNetProfitUsd: Number(kpi.todayNetProfitUsd || 0),
-        todayCashUsd: Number(kpi.todayCashUsd || 0),
-        todayMobileMoneyUsd: Number(kpi.todayMobileMoneyUsd || 0),
-        todayCreditUsd: Number(kpi.todayCreditUsd || 0),
+        todaySalesUsd: Number(kpis.todaySalesUsd || 0),
+        todayExpensesUsd: Number(kpis.todayExpensesUsd || 0),
+        todayGrossProfitUsd: Number(kpis.todayGrossProfitUsd || 0),
+        todayNetProfitUsd: Number(kpis.todayNetProfitUsd || 0),
+        todayCashUsd: Number(kpis.todayCashUsd || 0),
+        todayMobileMoneyUsd: Number(kpis.todayMobileMoneyUsd || 0),
+        todayCreditUsd: Number(kpis.todayCreditUsd || 0),
       },
       alerts: {
-        lowStockCount: Number(kpi.lowStockCount || 0),
-        expiredBatchesCount: Number(kpi.expiredBatchesCount || 0),
-        expiring30Count: Number(kpi.expiring30Count || 0),
-        expiring60Count: Number(kpi.expiring60Count || 0),
-        expiring90Count: Number(kpi.expiring90Count || 0),
-        todayAppointmentsCount: Number(kpi.todayAppointmentsCount || 0),
-        openTasksCount: Number(kpi.openTasksCount || 0),
+        lowStockCount: Number(alerts.lowStockCount ?? kpis.lowStockCount ?? 0),
+        expiredBatchesCount: Number(alerts.expiredBatchesCount ?? kpis.expiredBatchesCount ?? 0),
+        expiring30Count: Number(alerts.expiring30Count ?? kpis.expiring30Count ?? 0),
+        expiring60Count: Number(alerts.expiring60Count ?? kpis.expiring60Count ?? 0),
+        expiring90Count: Number(alerts.expiring90Count ?? kpis.expiring90Count ?? 0),
+        todayAppointmentsCount: Number(alerts.todayAppointmentsCount ?? kpis.todayAppointmentsCount ?? 0),
+        openTasksCount: Number(alerts.openTasksCount ?? kpis.openTasksCount ?? 0),
       },
       trend7Days: res.trend7Days || [],
       trend30Days: res.trend30Days || [],
@@ -142,6 +61,8 @@ export const reportsApi = {
         monthNetProfitUsd: Number(b.monthProfitUsd ?? b.monthNetProfitUsd ?? 0),
       })),
     };
+
+    return DashboardAnalyticsResponseSchema.parse(formatted);
   },
 
   async getComprehensive(
@@ -149,9 +70,10 @@ export const reportsApi = {
     branchId?: string
   ): Promise<ComprehensiveReportResponse> {
     const headers = branchId ? { 'x-branch-id': branchId } : undefined;
-    return apiClient.get<ComprehensiveReportResponse>(`/reports/comprehensive?period=${period}`, {
+    const res = await apiClient.get<ComprehensiveReportResponse>(`/reports/comprehensive?period=${period}`, {
       headers,
     });
+    return ComprehensiveReportResponseSchema.parse(res);
   },
 
   async getAuditLogs(limit: number = 100): Promise<ServerAuditLog[]> {

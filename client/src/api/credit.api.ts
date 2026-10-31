@@ -4,27 +4,9 @@
  */
 
 import { apiRequest } from './client';
+import { CustomerAging, CustomerAgingSchema } from '@baxnaano/shared';
 
-export interface CustomerAging {
-  id: string;
-  branchId: string;
-  name: string;
-  phone: string;
-  villageOrFarm?: string | null;
-  creditLimitUsd: number;
-  currentBalanceUsd: number;
-  aging: {
-    totalBalanceUsd: number;
-    bucket0to30Usd: number;
-    bucket31to60Usd: number;
-    bucket60PlusUsd: number;
-    overdueCount?: number;
-    isOverdue?: boolean;
-  };
-  entries: any[];
-  creditEntries?: any[];
-  isOverLimit?: boolean;
-}
+export type { CustomerAging };
 
 export const creditApi = {
   /**
@@ -51,7 +33,7 @@ export const creditApi = {
       const b60 = Number(c.aging?.bucket60PlusUsd || 0);
       const overdueCnt = Number(c.aging?.overdueCount || 0);
       const entries = c.creditEntries || c.entries || [];
-      return {
+      const item = {
         ...c,
         currentBalanceUsd: Number(c.currentBalanceUsd || 0),
         creditLimitUsd: Number(c.creditLimitUsd || 0),
@@ -66,6 +48,7 @@ export const creditApi = {
           isOverdue: b60 > 0 || overdueCnt > 0,
         },
       };
+      return CustomerAgingSchema.parse(item);
     });
   },
 

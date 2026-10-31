@@ -9,6 +9,7 @@ import {
 import {
   classifyExpiryBucket,
   computeCustomerCreditAging,
+  DashboardAnalyticsResponseSchema,
 } from '@baxnaano/shared';
 import { recordAuditLog } from '../utils/audit';
 
@@ -223,7 +224,7 @@ reportsRouter.get(
         .sort((a, b) => b.quantitySold - a.quantitySold)
         .slice(0, 10);
 
-      res.json({
+      const payload = {
         kpis: {
           todaySalesUsd: Number(todaySalesUsd.toFixed(2)),
           todayExpensesUsd: Number(todayExpensesUsd.toFixed(2)),
@@ -248,7 +249,16 @@ reportsRouter.get(
         todayAppointments,
         branchComparison:
           req.user?.role === 'ADMIN' ? Array.from(branchComparisonMap.values()) : [],
-      });
+      };
+
+      if (process.env.NODE_ENV !== 'production') {
+        const validated = DashboardAnalyticsResponseSchema.safeParse(payload);
+        if (!validated.success) {
+          console.error('[Dashboard Contract Drift]:', validated.error.flatten());
+        }
+      }
+
+      res.json(payload);
     } catch (error) {
       console.error('[Reports] Dashboard error:', error);
       res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });

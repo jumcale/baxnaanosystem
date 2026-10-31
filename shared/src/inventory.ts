@@ -277,3 +277,61 @@ export function classifyExpiryBucket(
   if (daysUntilExpiry <= 90) return { bucket: 'DAYS_90', daysUntilExpiry };
   return { bucket: 'SAFE', daysUntilExpiry };
 }
+
+// ----------------------------------------------------------------------------
+// RESPONSE SCHEMAS FOR CONTRACT INTEGRITY
+// ----------------------------------------------------------------------------
+
+export const BatchItemSchema = z.object({
+  id: z.string(),
+  branchId: z.string(),
+  productId: z.string(),
+  batchNumber: z.string(),
+  expiryDate: z.string(),
+  manufacturingDate: z.string().nullable().optional(),
+  buyPriceUsd: z.number(),
+  sellPriceUsd: z.number(),
+  cachedQuantity: z.number(),
+  expiryBucket: z.enum(['EXPIRED', 'DAYS_30', 'DAYS_60', 'DAYS_90', 'SAFE']),
+  daysUntilExpiry: z.number(),
+});
+export type BatchItem = z.infer<typeof BatchItemSchema>;
+
+export const ProductItemSchema = z.object({
+  id: z.string(),
+  branchId: z.string(),
+  categoryId: z.string(),
+  unitId: z.string(),
+  sku: z.string(),
+  barcode: z.string().nullable().optional(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  buyPriceUsd: z.number(),
+  sellPriceUsd: z.number(),
+  reorderLevel: z.number(),
+  genericName: z.string().nullable().optional(),
+  dosageForm: z.string().nullable().optional(),
+  strength: z.string().nullable().optional(),
+  isPrescriptionOnly: z.boolean(),
+  targetSpecies: z.array(z.string()).default([]),
+  dosePerKg: z.string().nullable().optional(),
+  withdrawalPeriodDays: z.number().nullable().optional(),
+  isColdChainRequired: z.boolean(),
+  batches: z.array(BatchItemSchema).default([]),
+  sellableStock: z.number(),
+  expiredStock: z.number(),
+  totalStock: z.number(),
+  isLowStock: z.boolean(),
+  earliestExpiry: z.string().nullable().optional(),
+  nextFefoBatch: z
+    .object({
+      batchNumber: z.string(),
+      expiryDate: z.string(),
+    })
+    .nullable()
+    .optional(),
+  category: z.object({ id: z.string(), name: z.string() }).optional(),
+  unit: z.object({ id: z.string(), name: z.string(), abbreviation: z.string() }).optional(),
+});
+export type ProductItem = z.infer<typeof ProductItemSchema>;
+

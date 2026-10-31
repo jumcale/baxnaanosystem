@@ -36,12 +36,15 @@ Production-ready, **Offline-First Multi-Branch PWA** built for **Baxnaano Pharma
 
 ### 1. Prerequisites
 - **Node.js** 20+
-- **PostgreSQL** 15+ (or Docker)
+- **PostgreSQL** 15+ running locally on port `5432` (or Docker Desktop)
 
 ### 2. Configure Environment
 ```bash
-cp .env.example server/.env
+cp .env.example .env
 ```
+
+On Windows, copy `.env.example` to `.env` in File Explorer or PowerShell. The Prisma
+commands and server both load this root `.env` file.
 
 ### 3. Install Dependencies & Generate Prisma Client
 ```bash

@@ -213,3 +213,56 @@ export const RefundSaleSchema = z.object({
     )
     .min(1),
 });
+
+// ----------------------------------------------------------------------------
+// 5. RESPONSE SCHEMAS FOR CONTRACT INTEGRITY
+// ----------------------------------------------------------------------------
+
+export const ExpenseRecordSchema = z.object({
+  id: z.string(),
+  branchId: z.string(),
+  category: z.string(),
+  amountUsd: z.number(),
+  amountOriginal: z.number().optional(),
+  currencyPaid: z.enum(['USD', 'SLSH']).optional(),
+  currency: z.enum(['USD', 'SLSH']).optional(),
+  exchangeRateUsed: z.number(),
+  paymentMethod: z.string().optional(),
+  payee: z.string().optional(),
+  description: z.string().nullable().optional(),
+  receiptNumber: z.string().nullable().optional(),
+  receiptPhotoData: z.string().nullable().optional(),
+  recordedById: z.string().optional(),
+  recordedBy: z.object({ id: z.string(), fullName: z.string() }).optional(),
+  approvedById: z.string().nullable().optional(),
+  approvedBy: z.object({ id: z.string(), fullName: z.string() }).optional(),
+  approvalStatus: z.enum(['PENDING', 'APPROVED', 'REJECTED']),
+  expenseDate: z.string(),
+  createdAt: z.string(),
+});
+export type ExpenseRecord = z.infer<typeof ExpenseRecordSchema>;
+
+export const CustomerAgingBucketSchema = z.object({
+  totalBalanceUsd: z.number(),
+  bucket0to30Usd: z.number(),
+  bucket31to60Usd: z.number(),
+  bucket60PlusUsd: z.number(),
+  overdueCount: z.number().optional(),
+  isOverdue: z.boolean().optional(),
+});
+
+export const CustomerAgingSchema = z.object({
+  id: z.string(),
+  branchId: z.string(),
+  name: z.string(),
+  phone: z.string(),
+  villageOrFarm: z.string().nullable().optional(),
+  creditLimitUsd: z.number(),
+  currentBalanceUsd: z.number(),
+  aging: CustomerAgingBucketSchema,
+  entries: z.array(z.any()).default([]),
+  creditEntries: z.array(z.any()).default([]),
+  isOverLimit: z.boolean().optional(),
+});
+export type CustomerAging = z.infer<typeof CustomerAgingSchema>;
+

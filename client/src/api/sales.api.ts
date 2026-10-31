@@ -6,60 +6,14 @@
  */
 
 import { apiRequest } from './client';
-import { CreateSaleInput } from '@baxnaano/shared';
+import { CreateSaleInput, ReceiptData, ReceiptDataSchema } from '@baxnaano/shared';
 
-export interface ReceiptData {
-  saleId: string;
-  receiptNumber: string;
-  branchId: string;
-  branchCode: string;
-  branchName: string;
-  branchLocation: string;
-  receiptHeader?: string;
-  receiptFooter?: string;
-  cashierName: string;
-  customerName?: string;
-  customerPhone?: string;
-  soldAt: string;
-  exchangeRateUsed: number;
-  subtotalUsd: number;
-  discountUsd: number;
-  taxUsd: number;
-  totalUsd: number;
-  totalSlsh: number;
-  paidUsd: number;
-  creditAmountUsd: number;
-  changeUsd: number;
-  items: Array<{
-    productId: string;
-    productName: string;
-    sku: string;
-    batchId: string;
-    batchNumber: string;
-    expiryDate: string;
-    quantity: number;
-    unitPriceUsd: number;
-    discountUsd: number;
-    subtotalUsd: number;
-    dosageNote?: string | null;
-    withdrawalPeriodDays?: number | null;
-  }>;
-  payments: Array<{
-    id: string;
-    method: string;
-    currency: 'USD' | 'SLSH';
-    amountOriginal: number;
-    amountUsd: number;
-    referencePhone?: string | null;
-    transactionRef?: string | null;
-  }>;
-}
-
+export type { ReceiptData };
 export type OfflineReceiptData = ReceiptData; // Alias for backward compatibility
 
 // Helper to format raw server sale into ReceiptData
 export function formatServerSaleToReceipt(sale: any): ReceiptData {
-  return {
+  const receipt = {
     saleId: sale.id,
     receiptNumber: sale.receiptNumber,
     branchId: sale.branchId,
@@ -105,6 +59,8 @@ export function formatServerSaleToReceipt(sale: any): ReceiptData {
       transactionRef: p.transactionRef || null,
     })),
   };
+
+  return ReceiptDataSchema.parse(receipt);
 }
 
 export const salesApi = {

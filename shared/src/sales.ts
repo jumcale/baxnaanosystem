@@ -90,3 +90,59 @@ export const CreateSaleSchema = z.object({
 export type CreateSaleInput = z.infer<typeof CreateSaleSchema>;
 export type SaleCartItemInput = z.infer<typeof SaleCartItemInputSchema>;
 export type SalePaymentInput = z.infer<typeof SalePaymentInputSchema>;
+
+export const ReceiptItemSchema = z.object({
+  productId: z.string(),
+  productName: z.string(),
+  sku: z.string(),
+  batchId: z.string(),
+  batchNumber: z.string(),
+  expiryDate: z.string(),
+  quantity: z.number(),
+  unitPriceUsd: z.number(),
+  discountUsd: z.number(),
+  subtotalUsd: z.number(),
+  dosageNote: z.string().nullable().optional(),
+  withdrawalPeriodDays: z.number().nullable().optional(),
+});
+
+export const ReceiptPaymentSchema = z.object({
+  id: z.string(),
+  method: z.string(),
+  currency: z.enum(CURRENCIES),
+  amountOriginal: z.number(),
+  amountUsd: z.number(),
+  referencePhone: z.string().nullable().optional(),
+  transactionRef: z.string().nullable().optional(),
+});
+
+export const ReceiptDataSchema = z.object({
+  saleId: z.string(),
+  receiptNumber: z.string(),
+  branchId: z.string(),
+  branchCode: z.string(),
+  branchName: z.string(),
+  branchLocation: z.string(),
+  receiptHeader: z.string().optional(),
+  receiptFooter: z.string().optional(),
+  cashierName: z.string(),
+  customerName: z.string().optional(),
+  customerPhone: z.string().optional(),
+  soldAt: z.string(),
+  exchangeRateUsed: z.number(),
+  subtotalUsd: z.number(),
+  discountUsd: z.number(),
+  taxUsd: z.number(),
+  totalUsd: z.number(),
+  totalSlsh: z.number(),
+  paidUsd: z.number(),
+  creditAmountUsd: z.number(),
+  changeUsd: z.number(),
+  items: z.array(ReceiptItemSchema),
+  payments: z.array(ReceiptPaymentSchema),
+});
+
+export type ReceiptItem = z.infer<typeof ReceiptItemSchema>;
+export type ReceiptPayment = z.infer<typeof ReceiptPaymentSchema>;
+export type ReceiptData = z.infer<typeof ReceiptDataSchema>;
+

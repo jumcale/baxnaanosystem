@@ -5,55 +5,9 @@
  */
 
 import { apiRequest } from './client';
+import { BatchItem, ProductItem, ProductItemSchema } from '@baxnaano/shared';
 
-export interface BatchItem {
-  id: string;
-  branchId: string;
-  productId: string;
-  batchNumber: string;
-  expiryDate: string;
-  manufacturingDate?: string | null;
-  buyPriceUsd: number;
-  sellPriceUsd: number;
-  cachedQuantity: number;
-  expiryBucket: 'EXPIRED' | 'DAYS_30' | 'DAYS_60' | 'DAYS_90' | 'SAFE';
-  daysUntilExpiry: number;
-}
-
-export interface ProductItem {
-  id: string;
-  branchId: string;
-  categoryId: string;
-  unitId: string;
-  sku: string;
-  barcode?: string | null;
-  name: string;
-  description?: string | null;
-  buyPriceUsd: number;
-  sellPriceUsd: number;
-  reorderLevel: number;
-  genericName?: string | null;
-  dosageForm?: string | null;
-  strength?: string | null;
-  isPrescriptionOnly: boolean;
-  targetSpecies: string[];
-  dosePerKg?: string | null;
-  withdrawalPeriodDays?: number | null;
-  isColdChainRequired: boolean;
-  batches: BatchItem[];
-  sellableStock: number;
-  expiredStock: number;
-  totalStock: number;
-  isLowStock: boolean;
-  earliestExpiry: string | null;
-  nextFefoBatch?: {
-    batchNumber: string;
-    expiryDate: string;
-  } | null;
-  category?: { id: string; name: string };
-  unit?: { id: string; name: string; abbreviation: string };
-}
-
+export type { BatchItem, ProductItem };
 export type ServerProductWithFEFO = ProductItem;
 
 export const inventoryApi = {
@@ -95,8 +49,23 @@ export const inventoryApi = {
       const nextBatch = (p.batches || []).find(
         (b: any) => Number(b.cachedQuantity) > 0 && b.expiryBucket !== 'EXPIRED'
       );
-      return {
+      const formatted = {
         ...p,
+        buyPriceUsd: Number(p.buyPriceUsd || 0),
+        sellPriceUsd: Number(p.sellPriceUsd || 0),
+        reorderLevel: Number(p.reorderLevel || 0),
+        sellableStock: Number(p.sellableStock || 0),
+        expiredStock: Number(p.expiredStock || 0),
+        totalStock: Number(p.totalStock || 0),
+        isLowStock: Boolean(p.isLowStock),
+        targetSpecies: p.targetSpecies || [],
+        batches: (p.batches || []).map((b: any) => ({
+          ...b,
+          buyPriceUsd: Number(b.buyPriceUsd || 0),
+          sellPriceUsd: Number(b.sellPriceUsd || 0),
+          cachedQuantity: Number(b.cachedQuantity || 0),
+          daysUntilExpiry: Number(b.daysUntilExpiry || 0),
+        })),
         nextFefoBatch:
           p.nextFefoBatch ||
           (nextBatch
@@ -108,6 +77,7 @@ export const inventoryApi = {
               }
             : null),
       };
+      return ProductItemSchema.parse(formatted);
     });
   },
 
