@@ -213,6 +213,11 @@ export const RefreshTokenSchema = z.object({
   refreshToken: z.string().min(10).optional(),
 });
 
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).optional(),
+  newPassword: z.string().min(8, 'validation.password_min').max(128),
+});
+
 export const CreateUserSchema = z.object({
   id: z.string().uuid().optional(),
   branchId: z.string().nullable(),
@@ -226,6 +231,8 @@ export const CreateUserSchema = z.object({
 });
 
 export type LoginInput = z.infer<typeof LoginSchema>;
+export type RefreshTokenInput = z.infer<typeof RefreshTokenSchema>;
+export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>;
 export type CreateUserInput = z.infer<typeof CreateUserSchema>;
 
 export interface AuthenticatedUser {
@@ -238,6 +245,7 @@ export interface AuthenticatedUser {
   branchType: 'PHARMACY' | 'VETERINARY' | null;
   permissions: Permission[];
   language: 'en' | 'so';
+  mustChangePassword?: boolean;
 }
 
 export * from './inventory';

@@ -17,7 +17,15 @@ export const ProtectedModule: React.FC<ProtectedModuleProps> = ({
   permission,
   children,
 }) => {
-  const { user, canViewModule, canPerform } = useAuth();
+  const { user, canViewModule, canPerform, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-emerald-400">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400" />
+      </div>
+    );
+  }
 
   if (!user) {
     return <Navigate to="/login" replace />;

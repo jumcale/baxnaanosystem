@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { prisma } from '../config/db';
+import { env } from '../config/env';
 import {
   LoginSchema,
   CreateUserSchema,
+  ChangePasswordSchema,
   AuthenticatedUser,
   ROLE_PERMISSIONS,
   RoleName,
@@ -25,11 +28,21 @@ function hashToken(rawToken: string): string {
   return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
+// Rate limiting: 5 failed login attempts per 15 minutes per IP + username
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${req.ip}_${req.body?.username || ''}`,
+  message: { error: 'TOO_MANY_ATTEMPTS', messageKey: 'auth.errors.rate_limit' },
+});
+
 /**
  * POST /api/auth/login
- * Authenticates user, returns JWT access token + refresh token, and writes AuditLog.
+ * Authenticates user, returns JWT access token, sets HttpOnly refresh cookie, and writes AuditLog.
  */
-authRouter.post('/login', async (req: Request, res: Response): Promise<void> => {
+authRouter.post('/login', loginLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
     const parsed = LoginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -90,6 +103,7 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
       branchType: user.branch?.type ?? null,
       permissions: ROLE_PERMISSIONS[roleName] || [],
       language: (user.language as 'en' | 'so') || 'en',
+      mustChangePassword: user.mustChangePassword ?? false,
     };
 
     const accessToken = signAccessToken(authUser);
@@ -124,19 +138,19 @@ authRouter.post('/login', async (req: Request, res: Response): Promise<void> => 
 
     res.cookie('baxnaano_refresh', rawRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/auth',
       maxAge: REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     });
 
     res.json({
       accessToken,
-      refreshToken: rawRefreshToken,
       user: authUser,
     });
   } catch (error: any) {
     if (error?.code === 'P1001' || error?.message?.includes("Can't reach database server")) {
-      console.warn('[Auth] Database connection error: Cannot reach PostgreSQL database. Check DATABASE_URL in .env');
+      console.warn('[Auth] Database connection error: Cannot reach PostgreSQL database.');
       res.status(503).json({
         error: 'DATABASE_UNAVAILABLE',
         messageKey: 'common.errors.server_error',
@@ -188,6 +202,7 @@ authRouter.post('/refresh', async (req: Request, res: Response): Promise<void> =
       branchType: user.branch?.type ?? null,
       permissions: ROLE_PERMISSIONS[roleName] || [],
       language: (user.language as 'en' | 'so') || 'en',
+      mustChangePassword: user.mustChangePassword ?? false,
     };
 
     const newRawRefreshToken = crypto.randomBytes(48).toString('hex');
@@ -213,14 +228,14 @@ authRouter.post('/refresh', async (req: Request, res: Response): Promise<void> =
 
     res.cookie('baxnaano_refresh', newRawRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/auth',
       maxAge: REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     });
 
     res.json({
       accessToken,
-      refreshToken: newRawRefreshToken,
       user: authUser,
     });
   } catch (error) {
@@ -231,6 +246,7 @@ authRouter.post('/refresh', async (req: Request, res: Response): Promise<void> =
 
 /**
  * POST /api/auth/logout
+ * Revokes refresh token in database and clears HttpOnly cookie.
  */
 authRouter.post('/logout', authenticateJWT, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -242,7 +258,12 @@ authRouter.post('/logout', authenticateJWT, async (req: Request, res: Response):
         data: { revokedAt: new Date() },
       });
     }
-    res.clearCookie('baxnaano_refresh');
+    res.clearCookie('baxnaano_refresh', {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/auth',
+    });
     res.json({ success: true });
   } catch (error) {
     console.error('[Auth] Logout error:', error);
@@ -258,48 +279,68 @@ authRouter.get('/me', authenticateJWT, async (req: Request, res: Response): Prom
 });
 
 /**
- * POST /api/auth/offline-exchange
- * Upgrades an offline cached session into a live JWT access token when the device reconnects.
+ * POST /api/auth/change-password
+ * Forces or allows users to update their password.
  */
-authRouter.post('/offline-exchange', async (req: Request, res: Response): Promise<void> => {
+authRouter.post('/change-password', authenticateJWT, async (req: Request, res: Response): Promise<void> => {
   try {
-    const username = String(req.body?.username || '').trim();
-    if (!username) {
-      res.status(400).json({ error: 'USERNAME_REQUIRED' });
+    const parsed = ChangePasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        details: parsed.error.flatten(),
+      });
       return;
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        username: { equals: username, mode: 'insensitive' },
-        deletedAt: null,
-        isActive: true,
-      },
-      include: { role: true, branch: true },
+    const { currentPassword, newPassword } = parsed.data;
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
     });
 
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
+    if (!user || !user.isActive) {
+      res.status(401).json({ error: 'USER_NOT_FOUND' });
       return;
     }
 
-    const roleName = user.role.name as RoleName;
-    const authUser: AuthenticatedUser = {
-      id: user.id,
-      username: user.username,
-      fullName: user.fullName,
-      role: roleName,
-      branchId: user.branchId,
-      branchCode: (user.branch?.code as BranchCode) ?? null,
-      branchType: user.branch?.type ?? null,
-      permissions: ROLE_PERMISSIONS[roleName] || [],
-      language: (user.language as 'en' | 'so') || 'en',
-    };
+    if (currentPassword) {
+      const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!valid) {
+        res.status(400).json({
+          error: 'INVALID_CURRENT_PASSWORD',
+          messageKey: 'auth.errors.invalid_credentials',
+        });
+        return;
+      }
+    } else if (!user.mustChangePassword) {
+      res.status(400).json({
+        error: 'CURRENT_PASSWORD_REQUIRED',
+        messageKey: 'auth.errors.invalid_credentials',
+      });
+      return;
+    }
 
-    const accessToken = signAccessToken(authUser);
-    res.json({ accessToken, user: authUser });
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        mustChangePassword: false,
+      },
+    });
+
+    await recordAuditLog({
+      branchId: user.branchId,
+      userId: user.id,
+      action: 'AUTH_PASSWORD_CHANGED',
+      entityType: 'User',
+      entityId: user.id,
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true });
   } catch (error) {
-    console.error('[Auth] Offline exchange error:', error);
+    console.error('[Auth] Change password error:', error);
     res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
   }
 });
@@ -347,6 +388,7 @@ authRouter.post(
           phone: data.phone ?? null,
           passwordHash,
           language: data.language,
+          mustChangePassword: true,
         },
       });
 

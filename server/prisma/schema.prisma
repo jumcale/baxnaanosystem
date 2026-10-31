@@ -203,11 +203,12 @@ model User {
   email        String?   @unique
   fullName     String
   phone        String?
-  passwordHash String
-  pinHash      String?   // Optional fast offline POS unlock PIN
-  language     String    @default("en")
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
+  passwordHash       String
+  pinHash            String?   // Optional fast offline POS unlock PIN
+  language           String    @default("en")
+  isActive           Boolean   @default(true)
+  mustChangePassword Boolean   @default(false)
+  lastLoginAt        DateTime?
   version      Int       @default(1)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt

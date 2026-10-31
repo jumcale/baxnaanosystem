@@ -1,6 +1,15 @@
+import crypto from 'crypto';
 import { PrismaClient, BranchType, RoleName, Species, StockMovementType } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { BAXNAANO_BRANCHES, ROLE_PERMISSIONS } from '@baxnaano/shared';
+
+// Guard: abort unless DATABASE_URL points strictly to localhost or 127.0.0.1
+const dbUrl = process.env.DATABASE_URL || '';
+if (!dbUrl.includes('localhost') && !dbUrl.includes('127.0.0.1')) {
+  console.error('⛔ FATAL SECURITY GUARD: seed script refused to run.');
+  console.error('DATABASE_URL must point to localhost or 127.0.0.1. Never run seed against remote or production databases.');
+  process.exit(1);
+}
 
 const prisma = new PrismaClient();
 
@@ -95,6 +104,11 @@ export const B1_PHARMACY_SEED_PRODUCTS = [
   },
 ];
 
+function generateRandomPassword(): string {
+  // Generate random 14-char secure alphanumeric password ending in '9!' to guarantee complexity
+  return crypto.randomBytes(9).toString('base64').replace(/[^a-zA-Z0-9]/g, 'a') + '9!';
+}
+
 async function main() {
   console.log('🌱 Seeding Baxnaano Pharmacy & Veterinary Clinic database...');
 
@@ -136,9 +150,7 @@ async function main() {
     roleMap[roleName] = role.id;
   }
 
-  // 3. Seed Users across all Roles & Branches (Default Password: Password123!)
-  const defaultPasswordHash = await bcrypt.hash('Password123!', 12);
-
+  // 3. Seed Users across all Roles & Branches (Random passwords, mustChangePassword: true)
   await prisma.user.deleteMany({
     where: {
       username: { in: ['pharmacist_b1', 'cashier_b1'] },
@@ -191,13 +203,20 @@ async function main() {
   ];
 
   let adminUserId = '';
+  const credentialsTable: Array<{ username: string; role: string; tempPassword: string; mustChangePassword: boolean }> = [];
+
   for (const u of seedUsers) {
+    const rawPass = generateRandomPassword();
+    const passwordHash = await bcrypt.hash(rawPass, 12);
+
     const createdUser = await prisma.user.upsert({
       where: { username: u.username },
       update: {
         fullName: u.fullName,
         roleId: roleMap[u.role],
         branchId: u.branchId,
+        passwordHash,
+        mustChangePassword: true,
       },
       create: {
         id: u.id,
@@ -205,12 +224,25 @@ async function main() {
         fullName: u.fullName,
         roleId: roleMap[u.role],
         branchId: u.branchId,
-        passwordHash: defaultPasswordHash,
+        passwordHash,
         language: 'en',
+        mustChangePassword: true,
       },
     });
+
+    credentialsTable.push({
+      username: u.username,
+      role: u.role,
+      tempPassword: rawPass,
+      mustChangePassword: true,
+    });
+
     if (u.username === 'admin') adminUserId = createdUser.id;
   }
+
+  console.log('\n================ INITIAL SEED CREDENTIALS (FORCE RESET ON FIRST LOGIN) ================');
+  console.table(credentialsTable);
+  console.log('========================================================================================\n');
 
   // 4. Seed Categories & Units per Branch
   const branchCategories: Record<string, string> = {};

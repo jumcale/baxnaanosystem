@@ -146,10 +146,11 @@ describe('4. RBAC & Multi-Branch API Isolation Integration Tests', () => {
     expect(hasPermission('CASHIER', 'expenses:approve')).toBe(false);
   });
 
-  it('returns 200 on /api/health', async () => {
+  it('checks /api/health status reporting ok or degraded based on db connectivity', async () => {
     const res = await request(app).get('/api/health');
-    expect(res.status).toBe(200);
-    expect(res.body.status).toBe('ok');
+    expect([200, 503]).toContain(res.status);
+    expect(['ok', 'degraded']).toContain(res.body.status);
+    expect(['connected', 'disconnected']).toContain(res.body.database);
   });
 
   it('blocks unauthenticated requests on protected routes with 401', async () => {

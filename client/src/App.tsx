@@ -18,7 +18,16 @@ import { SettingsPage } from './pages/SettingsPage';
 import './i18n';
 
 const RoleDefaultHome: React.FC = () => {
-  const { user, canViewModule } = useAuth();
+  const { user, canViewModule, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-emerald-400">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400" />
+      </div>
+    );
+  }
+
   if (!user) return <Navigate to="/login" replace />;
   if (canViewModule('DASHBOARD')) return <DashboardPage />;
   if (canViewModule('SALES_POINT')) return <Navigate to="/pos" replace />;
@@ -32,6 +41,7 @@ export const App: React.FC = () => {
     if (typeof window !== 'undefined' && window.indexedDB) {
       try {
         window.indexedDB.deleteDatabase('BaxnaanoERP_DB');
+        window.indexedDB.deleteDatabase('BaxnaanoOfflineDB');
       } catch {
         // ignore
       }

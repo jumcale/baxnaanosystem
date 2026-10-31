@@ -1,6 +1,8 @@
 /**
  * Baxnaano Centralized Online-Only HTTP API Client
  * - Authoritative direct communication with Express + PostgreSQL backend.
+ * - In-memory access token storage (never persisted to localStorage).
+ * - HttpOnly cookies with credentials: 'include'.
  * - Injects JWT Authorization and branch scope headers.
  * - Handles connection health checks, network timeouts, and structured error propagation.
  */
@@ -12,6 +14,16 @@ export const API_BASE =
     : 'http://localhost:4000/api');
 
 export const API_BASE_URL = API_BASE;
+
+let inMemoryAccessToken: string | null = null;
+
+export function setApiAccessToken(token: string | null): void {
+  inMemoryAccessToken = token;
+}
+
+export function getApiAccessToken(): string | null {
+  return inMemoryAccessToken;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -35,6 +47,7 @@ export async function checkServerHealth(): Promise<boolean> {
     const timeoutId = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(`${API_BASE}/health`, {
       method: 'GET',
+      credentials: 'include',
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -48,15 +61,15 @@ export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('baxnaano_access_token') : null;
+  const token = inMemoryAccessToken;
   const activeBranchId = typeof localStorage !== 'undefined' ? localStorage.getItem('baxnaano_active_branch') : null;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
+    ...((options.headers as Record<string, string>) || {}),
   };
 
-  if (token && token !== 'offline-local-jwt-token') {
+  if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
@@ -64,15 +77,18 @@ export async function apiRequest<T>(
     headers['x-branch-id'] = activeBranchId;
   }
 
-  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
+      credentials: 'include',
       headers,
     });
-  } catch (err) {
+  } catch {
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     throw new ApiError(
       0,

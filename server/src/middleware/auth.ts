@@ -8,8 +8,9 @@ import {
   hasPermission,
   BranchCode,
 } from '@baxnaano/shared';
+import { env } from '../config/env';
 
-const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'baxnaano-prod-access-secret-change-me';
+const JWT_ACCESS_SECRET = env.JWT_ACCESS_SECRET;
 
 export interface BranchScopeContext {
   /** If null, the user is an ADMIN viewing 'ALL' branches consolidated */
