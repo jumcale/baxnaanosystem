@@ -27,4 +27,4 @@ ENV NODE_ENV=production
 ENV PORT=4000
 EXPOSE 4000
 
-CMD ["sh", "-c", "npx prisma db push --schema=server/prisma/schema.prisma && npm run prisma:seed -w server && npm run start -w server"]
+CMD ["npm", "run", "start", "-w", "server"]
