@@ -126,6 +126,7 @@ export const SalesPointPage: React.FC = () => {
   }, [activeBranchId]);
 
   const handleExchangeRateChange = async (nextVal: number) => {
+    if (user?.role !== 'ADMIN') return;
     if (nextVal > 0) {
       setExchangeRate(nextVal);
       if (activeBranchId && activeBranchId !== 'ALL') {
@@ -499,15 +500,21 @@ export const SalesPointPage: React.FC = () => {
             {/* Configurable Exchange Rate (USD <-> SLSH) */}
             <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 px-3 py-2 rounded-xl border dark:border-slate-700">
               <span className="text-xs font-semibold whitespace-nowrap">1 USD =</span>
-              <NumericInput
-                min={1}
-                step="any"
-                placeholder="10000"
-                fallbackOnBlur={10000}
-                value={exchangeRate}
-                onChange={handleExchangeRateChange}
-                className="w-24 font-bold text-sm bg-transparent border-b border-emerald-500 focus:outline-none text-center"
-              />
+              {user?.role === 'ADMIN' ? (
+                <NumericInput
+                  min={1}
+                  step="any"
+                  placeholder="10000"
+                  fallbackOnBlur={10000}
+                  value={exchangeRate}
+                  onChange={handleExchangeRateChange}
+                  className="w-24 font-bold text-sm bg-transparent border-b border-emerald-500 focus:outline-none text-center"
+                />
+              ) : (
+                <span className="font-bold text-sm text-emerald-600 px-2">
+                  {exchangeRate.toLocaleString()}
+                </span>
+              )}
               <span className="text-xs font-semibold">SLSH</span>
             </div>
           </div>

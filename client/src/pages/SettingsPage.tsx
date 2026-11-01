@@ -58,7 +58,7 @@ export const SettingsPage: React.FC = () => {
 
     try {
       const updated = await settingsApi.updateBranchSettings(targetBranch, {
-        exchangeRate: validRate,
+        ...(user?.role === 'ADMIN' ? { exchangeRate: validRate } : {}),
         taxRate: Math.max(0, taxRate),
         receiptHeader: receiptHeader.trim() || 'Baxnaano Pharmacy & Veterinary Clinic',
         receiptFooter: receiptFooter.trim() || 'Thank you for choosing Baxnaano! / Mahadsanid!',
@@ -182,15 +182,22 @@ export const SettingsPage: React.FC = () => {
               <label className="block text-xs font-semibold mb-1">
                 Default Exchange Rate (1 USD = SLSH)
               </label>
-              <NumericInput
-                min={1}
-                step="any"
-                placeholder="8500"
-                fallbackOnBlur={8500}
-                value={exchangeRate}
-                onChange={(val) => setExchangeRate(val)}
-                className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900 font-bold"
-              />
+              {user?.role === 'ADMIN' ? (
+                <NumericInput
+                  min={1}
+                  step="any"
+                  placeholder="8500"
+                  fallbackOnBlur={8500}
+                  value={exchangeRate}
+                  onChange={(val) => setExchangeRate(val)}
+                  className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900 font-bold"
+                />
+              ) : (
+                <div className="w-full min-h-[44px] px-3 py-2 border rounded-xl bg-slate-100 dark:bg-slate-900 font-bold flex items-center justify-between text-slate-700 dark:text-slate-300">
+                  <span>1 USD = {exchangeRate.toLocaleString()} SLSH</span>
+                  <span className="text-[11px] text-slate-400 font-normal">Admin Only / Kaliya Maamulaha</span>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">Tax Rate (%)</label>

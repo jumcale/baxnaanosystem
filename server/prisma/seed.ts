@@ -157,7 +157,9 @@ async function main() {
   // 3. Seed Users across all Roles & Branches (Random passwords, mustChangePassword: true)
   await prisma.user.deleteMany({
     where: {
-      username: { in: ['pharmacist_b1', 'cashier_b1'] },
+      username: {
+      in: ['pharmacist_b1', 'cashier_b1', 'manager_b2', 'cashier_b3'],
+    },
     },
   });
 
@@ -176,13 +178,7 @@ async function main() {
       role: 'BRANCH_MANAGER',
       branchId: BAXNAANO_BRANCHES.B1.id,
     },
-    {
-      id: 'user-manager-b2',
-      username: 'manager_b2',
-      fullName: 'Maxamed Nuur (B2 Vet Manager - Arabsiyo)',
-      role: 'BRANCH_MANAGER',
-      branchId: BAXNAANO_BRANCHES.B2.id,
-    },
+    
     {
       id: 'user-vet-b2',
       username: 'vet_b2',
@@ -197,13 +193,7 @@ async function main() {
       role: 'VET_OFFICER',
       branchId: BAXNAANO_BRANCHES.B3.id,
     },
-    {
-      id: 'user-cashier-b3',
-      username: 'cashier_b3',
-      fullName: 'Aamina Faarax (B3 Cashier - Gabiley)',
-      role: 'CASHIER',
-      branchId: BAXNAANO_BRANCHES.B3.id,
-    },
+    
   ];
 
   let adminUserId = '';

@@ -456,6 +456,14 @@ reportsRouter.patch(
         return;
       }
 
+      if (req.body.exchangeRate !== undefined && req.user!.role !== 'ADMIN') {
+        res.status(403).json({
+          error: 'FORBIDDEN_EXCHANGE_RATE_UPDATE',
+          message: 'Only administrator can change currency exchange rates.',
+        });
+        return;
+      }
+
       const {
         name,
         phone,
