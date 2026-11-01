@@ -415,3 +415,112 @@ authRouter.post(
     }
   }
 );
+
+/**
+ * GET /api/auth/users
+ * Returns list of staff and cashier accounts for admin management
+ */
+authRouter.get(
+  '/users',
+  authenticateJWT,
+  requirePermissions('users:manage'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const users = await prisma.user.findMany({
+        where: { deletedAt: null },
+        select: {
+          id: true,
+          username: true,
+          fullName: true,
+          phone: true,
+          email: true,
+          isActive: true,
+          branchId: true,
+          role: { select: { name: true } },
+          branch: { select: { id: true, code: true, name: true, location: true } },
+          createdAt: true,
+        },
+        orderBy: { username: 'asc' },
+      });
+
+      res.json({
+        users: users.map((u) => ({
+          id: u.id,
+          username: u.username,
+          fullName: u.fullName,
+          phone: u.phone,
+          email: u.email,
+          isActive: u.isActive,
+          role: u.role.name,
+          branchId: u.branchId,
+          branchCode: u.branch?.code || null,
+          branchName: u.branch?.name || null,
+          branchLocation: u.branch?.location || null,
+        })),
+      });
+    } catch (error) {
+      console.error('[Auth] Get users error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
+/**
+ * PATCH /api/auth/users/:id
+ * Updates cashier/staff profile name, phone, email, or password
+ */
+authRouter.patch(
+  '/users/:id',
+  authenticateJWT,
+  requirePermissions('users:manage'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { fullName, phone, email, password } = req.body;
+
+      const existing = await prisma.user.findUnique({ where: { id } });
+      if (!existing) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
+        return;
+      }
+
+      const updateData: Record<string, unknown> = {};
+      if (fullName !== undefined) updateData.fullName = String(fullName).trim();
+      if (phone !== undefined) updateData.phone = phone ? String(phone).trim() : null;
+      if (email !== undefined) updateData.email = email ? String(email).trim() : null;
+      if (password) {
+        updateData.passwordHash = await bcrypt.hash(String(password), 12);
+        updateData.mustChangePassword = false;
+      }
+
+      const updated = await prisma.user.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          username: true,
+          fullName: true,
+          phone: true,
+          email: true,
+          branchId: true,
+          role: { select: { name: true } },
+        },
+      });
+
+      await recordAuditLog({
+        branchId: updated.branchId,
+        userId: req.user!.id,
+        action: 'USER_UPDATE',
+        entityType: 'User',
+        entityId: updated.id,
+        newData: { fullName: updated.fullName, phone: updated.phone },
+        ipAddress: req.ip,
+      });
+
+      res.json({ user: updated });
+    } catch (error) {
+      console.error('[Auth] Update user error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);

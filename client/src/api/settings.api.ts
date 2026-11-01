@@ -1,6 +1,6 @@
 /**
  * Baxnaano Online-Only System
- * Authoritative Branch Settings API
+ * Authoritative Branch Settings & User Management API
  */
 import { apiClient } from './client';
 
@@ -19,6 +19,20 @@ export interface ServerBranch {
   defaultLang: 'en' | 'so';
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StaffUser {
+  id: string;
+  username: string;
+  fullName: string;
+  phone?: string | null;
+  email?: string | null;
+  isActive: boolean;
+  role: string;
+  branchId?: string | null;
+  branchCode?: string | null;
+  branchName?: string | null;
+  branchLocation?: string | null;
 }
 
 export const settingsApi = {
@@ -45,5 +59,21 @@ export const settingsApi = {
       data
     );
     return res.branch;
+  },
+
+  async getUsers(): Promise<StaffUser[]> {
+    const res = await apiClient.get<{ users: StaffUser[] }>('/auth/users');
+    return res.users;
+  },
+
+  async updateUser(
+    id: string,
+    data: { fullName?: string; phone?: string; email?: string; password?: string }
+  ): Promise<{ id: string; username: string; fullName: string }> {
+    const res = await apiClient.patch<{ user: { id: string; username: string; fullName: string } }>(
+      `/auth/users/${id}`,
+      data
+    );
+    return res.user;
   },
 };

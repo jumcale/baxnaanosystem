@@ -7,10 +7,13 @@ import {
   ShieldCheck,
   Save,
   CheckCircle2,
+  Users,
+  Edit3,
+  UserCheck,
 } from 'lucide-react';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
-import { settingsApi } from '../api';
+import { settingsApi, StaffUser } from '../api';
 import { NumericInput } from '../components/NumericInput';
 
 export const SettingsPage: React.FC = () => {
@@ -22,6 +25,23 @@ export const SettingsPage: React.FC = () => {
   const [receiptHeader, setReceiptHeader] = useState<string>('Baxnaano Pharmacy & Veterinary Clinic');
   const [receiptFooter, setReceiptFooter] = useState<string>('Thank you for choosing Baxnaano! / Mahadsanid!');
   const [statusBanner, setStatusBanner] = useState<string | null>(null);
+
+  // Staff & Cashier Management State
+  const [staffList, setStaffList] = useState<StaffUser[]>([]);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editingFullName, setEditingFullName] = useState<string>('');
+  const [isSavingUser, setIsSavingUser] = useState<boolean>(false);
+
+  const loadStaff = async () => {
+    if (user?.role === 'ADMIN') {
+      try {
+        const users = await settingsApi.getUsers();
+        setStaffList(users);
+      } catch (err) {
+        console.error('Failed to load staff list:', err);
+      }
+    }
+  };
 
   useEffect(() => {
     settingsApi.getBranches().then((branches) => {
@@ -35,7 +55,9 @@ export const SettingsPage: React.FC = () => {
     }).catch((err) => {
       console.error('Failed to load branch settings from server:', err);
     });
-  }, [activeBranchId]);
+
+    loadStaff();
+  }, [activeBranchId, user?.role]);
 
   const showTemporaryBanner = (msg: string) => {
     setStatusBanner(msg);
@@ -72,6 +94,30 @@ export const SettingsPage: React.FC = () => {
       );
     } catch (err: any) {
       showTemporaryBanner(err?.message || 'Failed to save settings on central server.');
+    }
+  };
+
+  const handleStartEditUser = (u: StaffUser) => {
+    setEditingUserId(u.id);
+    setEditingFullName(u.fullName);
+  };
+
+  const handleSaveUserFullName = async (userId: string) => {
+    if (!editingFullName.trim()) return;
+    setIsSavingUser(true);
+    try {
+      await settingsApi.updateUser(userId, { fullName: editingFullName.trim() });
+      showTemporaryBanner(
+        i18n.language === 'so'
+          ? `Magaca cashier-ka si guul leh ayaa loo beddelay!`
+          : `Cashier name updated successfully on all receipts and invoices!`
+      );
+      setEditingUserId(null);
+      await loadStaff();
+    } catch (err: any) {
+      showTemporaryBanner(err?.message || 'Failed to update user name.');
+    } finally {
+      setIsSavingUser(false);
     }
   };
 
@@ -232,6 +278,112 @@ export const SettingsPage: React.FC = () => {
             Logged in as: <strong>{user?.fullName}</strong> ({user?.role})
           </div>
         </form>
+
+        {/* Staff & Cashier Names Management (Admin Only) */}
+        {user?.role === 'ADMIN' && (
+          <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-4 md:col-span-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-bold text-base flex items-center gap-2">
+                  <Users className="w-5 h-5 text-emerald-600" />
+                  Staff & Cashier Names Management / Maamulka Magacyada Cashiers-ka
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Change the cashier or officer name that appears on printed invoices, receipts, and reports across all branches.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-100 dark:bg-slate-700">
+                  <tr>
+                    <th className="p-3">Username (Login)</th>
+                    <th className="p-3">Branch / Location</th>
+                    <th className="p-3">Role</th>
+                    <th className="p-3">Cashier Display Name (Printed on Invoices)</th>
+                    <th className="p-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                  {staffList.map((s) => {
+                    const isEditing = editingUserId === s.id;
+                    return (
+                      <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-750">
+                        <td className="p-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {s.username}
+                        </td>
+                        <td className="p-3">
+                          {s.branchCode ? (
+                            <span className="inline-flex items-center gap-1 font-semibold">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                              {s.branchCode} - {s.branchLocation}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">Central / All</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                            {s.role}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingFullName}
+                              onChange={(e) => setEditingFullName(e.target.value)}
+                              className="w-full min-h-[38px] px-3 py-1.5 border rounded-lg dark:bg-slate-900 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                              placeholder="e.g. Abdirashid (B1 Cashier)"
+                              autoFocus
+                            />
+                          ) : (
+                            <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                              <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                              {s.fullName}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-3 text-right">
+                          {isEditing ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                disabled={isSavingUser}
+                                onClick={() => handleSaveUserFullName(s.id)}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                {isSavingUser ? 'Saving...' : 'Save'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingUserId(null)}
+                                className="px-2.5 py-1.5 border rounded-lg text-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditUser(s)}
+                              className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              Change Name
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
