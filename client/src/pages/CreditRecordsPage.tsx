@@ -127,10 +127,9 @@ export const CreditRecordsPage: React.FC = () => {
     e.preventDefault();
     if (!selectedForPayment || !user) return;
     const targetBranch =
+      selectedForPayment.branchId ||
       user?.branchId ||
-      (activeBranchId === 'ALL'
-        ? String(selectedForPayment.branchId || BAXNAANO_BRANCHES.B1.id)
-        : activeBranchId);
+      (activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId);
 
     try {
       await creditApi.recordRepayment({

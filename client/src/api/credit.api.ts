@@ -83,7 +83,7 @@ export const creditApi = {
     transactionRef?: string;
     notes?: string;
   }): Promise<any> {
-    return apiRequest('/credit/payments', {
+    return apiRequest('/credit/repayments', {
       method: 'POST',
       body: JSON.stringify(paymentData),
     });

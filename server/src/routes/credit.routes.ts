@@ -136,8 +136,8 @@ creditRouter.post(
  * in USD or SLSH, updates Customer.currentBalanceUsd, and writes Payment + CreditLedger entry.
  */
 creditRouter.post(
-  '/repayments',
-  enforceBranchScope({ requireConcreteBranchForWrites: true }),
+  ['/repayments', '/payments'],
+  enforceBranchScope({ requireConcreteBranchForWrites: false }),
   requirePermissions('credit:payment'),
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -161,12 +161,14 @@ creditRouter.post(
         }
 
         const customer = await tx.customer.findFirst({
-          where: { id: data.customerId, branchId: data.branchId, deletedAt: null },
+          where: { id: data.customerId, deletedAt: null },
         });
 
         if (!customer) {
           throw new Error('CUSTOMER_NOT_FOUND');
         }
+
+        const effectiveBranchId = customer.branchId || data.branchId;
 
         const updatedCustomer = await tx.customer.update({
           where: { id: customer.id },
@@ -179,7 +181,7 @@ creditRouter.post(
         const ledgerEntry = await tx.creditLedger.create({
           data: {
             id: data.id,
-            branchId: data.branchId,
+            branchId: effectiveBranchId,
             customerId: customer.id,
             type: CreditTransactionType.PAYMENT,
             amountDeltaUsd: -Math.abs(amountUsd),
@@ -193,7 +195,7 @@ creditRouter.post(
 
         await tx.payment.create({
           data: {
-            branchId: data.branchId,
+            branchId: effectiveBranchId,
             creditLedgerId: ledgerEntry.id,
             method: data.method as PaymentMethod,
             currency: data.currency as Currency,
@@ -221,6 +223,35 @@ creditRouter.post(
       res.status(201).json(result);
     } catch (error) {
       console.error('[Credit] Repayment error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
+/**
+ * GET /api/credit/ledger
+ * List credit transactions
+ */
+creditRouter.get(
+  '/ledger',
+  enforceBranchScope({ requireConcreteBranchForWrites: false }),
+  requirePermissions('credit:view'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const customerId = req.query.customerId as string | undefined;
+      const entries = await prisma.creditLedger.findMany({
+        where: scopedWhere(req, {
+          ...(customerId ? { customerId } : {}),
+        }),
+        include: {
+          customer: { select: { id: true, name: true, phone: true } },
+          sale: { select: { id: true, receiptNumber: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      res.json({ entries });
+    } catch (error) {
+      console.error('[Credit] Ledger error:', error);
       res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
     }
   }
