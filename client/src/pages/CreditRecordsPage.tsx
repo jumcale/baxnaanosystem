@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { creditApi, settingsApi, CustomerAging } from '../api';
 import { NumericInput } from '../components/NumericInput';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
+import { printStatementPdf } from '../services/statementPdf';
 
 export const CreditRecordsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -492,11 +493,13 @@ export const CreditRecordsPage: React.FC = () => {
 
             <div className="print:hidden flex justify-end gap-2 pt-3">
               <button
-                onClick={() => window.print()}
-                className="min-h-[44px] px-4 py-2 bg-slate-900 text-white rounded-xl flex items-center gap-1.5"
+                onClick={() =>
+                  printStatementPdf(statementCustomer as any, activeBranchId)
+                }
+                className="min-h-[44px] px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl flex items-center gap-1.5 font-semibold text-xs"
               >
                 <Printer className="w-4 h-4" />
-                Print / Save PDF
+                Print Official Statement (PDF)
               </button>
               <button
                 onClick={() => setStatementCustomer(null)}

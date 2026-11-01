@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Printer, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Printer, CheckCircle2, AlertTriangle, FileText, Download } from 'lucide-react';
 import { ReceiptData } from '../api';
+import {
+  printInvoicePdf,
+  downloadInvoicePdf,
+  printThermalReceiptElement,
+} from '../services/receiptPdf';
 
 interface ReceiptPreviewModalProps {
   receipt: ReceiptData;
@@ -9,8 +14,10 @@ interface ReceiptPreviewModalProps {
 }
 
 /**
- * Offline-First 58mm & 80mm Thermal & PDF Receipt Generator
- * Works 100% offline using native print styling and printable container.
+ * Multi-Format Receipt & Invoice Center
+ * Supports:
+ * 1. Clean, isolated Thermal Receipt printing (58mm & 80mm) without phantom/duplicate pages.
+ * 2. Official A4 Tax Invoice / Receipt PDF with company logo, dual currency, and signatures.
  */
 export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
   receipt,
@@ -19,8 +26,16 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
   const { t } = useTranslation();
   const [paperWidth, setPaperWidth] = useState<'58mm' | '80mm'>('80mm');
 
-  const handlePrint = () => {
-    window.print();
+  const handlePrintThermal = () => {
+    printThermalReceiptElement('baxnaano-thermal-receipt');
+  };
+
+  const handlePrintA4Invoice = () => {
+    printInvoicePdf(receipt);
+  };
+
+  const handleDownloadA4Pdf = () => {
+    downloadInvoicePdf(receipt);
   };
 
   return (
@@ -66,15 +81,15 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
             paperWidth === '58mm' ? 'w-[220px]' : 'w-[302px]'
           }`}
         >
-          {/* Branch Header */}
+          {/* Branch Header with Logo */}
           <div className="text-center border-b border-dashed border-black pb-2 mb-2">
             <img
               src="/baxnaano-logo.jpg"
               alt="Baxnaano Logo"
-              className="w-12 h-12 rounded-full object-cover mx-auto mb-1"
+              className="w-14 h-14 rounded-full object-cover mx-auto mb-1.5 border border-slate-200"
             />
             <div className="font-extrabold text-sm uppercase">
-              {receipt.receiptHeader || receipt.branchName}
+              {receipt.receiptHeader || receipt.branchName || 'BAXNAANO PHARMACY & CLINIC'}
             </div>
             <div className="text-[11px]">{receipt.branchLocation} | Code: {receipt.branchCode}</div>
             <div className="text-[10px] mt-0.5">
@@ -111,7 +126,7 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
                   <div className="text-[10px] italic mt-0.5">* {item.dosageNote}</div>
                 )}
                 {item.withdrawalPeriodDays && item.withdrawalPeriodDays > 0 && (
-                  <div className="text-[10px] font-bold flex items-center gap-1 mt-0.5">
+                  <div className="text-[10px] font-bold flex items-center gap-1 mt-0.5 text-amber-800">
                     <AlertTriangle className="w-3 h-3 inline" />
                     {t('pos.receipt.withdrawal_warning', { days: item.withdrawalPeriodDays })}
                   </div>
@@ -165,7 +180,7 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
               <span>${receipt.paidUsd.toFixed(2)}</span>
             </div>
             {receipt.creditAmountUsd > 0 && (
-              <div className="flex justify-between font-bold">
+              <div className="flex justify-between font-bold text-red-600">
                 <span>{t('pos.receipt.credit_due')}:</span>
                 <span>${receipt.creditAmountUsd.toFixed(2)}</span>
               </div>
@@ -188,22 +203,43 @@ export const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({
         </div>
 
         {/* Action Buttons (Hidden when printing) */}
-        <div className="print:hidden flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="min-h-[48px] px-5 py-2.5 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold rounded-xl flex items-center gap-2"
-          >
-            <Printer className="w-5 h-5" />
-            {t('pos.receipt.print_thermal')}
-          </button>
-          <button
-            type="button"
-            onClick={onCloseAndNewSale}
-            className="min-h-[48px] px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl"
-          >
-            {t('pos.receipt.new_sale')}
-          </button>
+        <div className="print:hidden space-y-2 pt-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={handlePrintThermal}
+              className="min-h-[44px] px-3 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-semibold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:opacity-90"
+            >
+              <Printer className="w-4 h-4" />
+              {t('pos.receipt.print_thermal')}
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintA4Invoice}
+              className="min-h-[44px] px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl flex items-center justify-center gap-1.5 text-xs"
+            >
+              <FileText className="w-4 h-4" />
+              A4 Tax Invoice (PDF)
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadA4Pdf}
+              className="min-h-[44px] flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-semibold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-700"
+            >
+              <Download className="w-4 h-4" />
+              Download A4 PDF
+            </button>
+            <button
+              type="button"
+              onClick={onCloseAndNewSale}
+              className="min-h-[44px] flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs"
+            >
+              {t('pos.receipt.new_sale')}
+            </button>
+          </div>
         </div>
       </div>
     </div>

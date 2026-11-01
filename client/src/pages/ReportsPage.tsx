@@ -15,10 +15,11 @@ import {
   CustomerAging,
   DashboardAnalyticsResponse,
 } from '../api';
+import { printReportPdf } from '../services/reportPdf';
 
 export const ReportsPage: React.FC = () => {
   const { t } = useTranslation();
-  const { activeBranchId } = useAuth();
+  const { user, activeBranchId } = useAuth();
 
   const [period, setPeriod] = useState<'DAILY' | 'WEEKLY' | 'MONTHLY'>('MONTHLY');
   const [products, setProducts] = useState<ServerProductWithFEFO[]>([]);
@@ -93,8 +94,17 @@ export const ReportsPage: React.FC = () => {
           ))}
 
           <button
-            onClick={() => window.print()}
-            className="min-h-[44px] px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+            onClick={() =>
+              printReportPdf({
+                branchId: activeBranchId,
+                period,
+                dashData,
+                products,
+                customers,
+                generatedBy: user ? `${user.fullName || user.username} (${user.role})` : 'System Auditor',
+              })
+            }
+            className="min-h-[44px] px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-slate-800"
           >
             <Printer className="w-4 h-4" />
             {t('reports.export_pdf')}

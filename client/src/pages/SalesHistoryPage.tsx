@@ -5,10 +5,12 @@ import {
   Printer,
   RotateCcw,
   Search,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { salesApi, ReceiptData } from '../api';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
+import { printInvoicePdf } from '../services/receiptPdf';
 
 export const SalesHistoryPage: React.FC = () => {
   const { t } = useTranslation();
@@ -156,12 +158,28 @@ export const SalesHistoryPage: React.FC = () => {
                   onClick={async () => {
                     try {
                       const receipt = await salesApi.getReceipt(String(s.id));
-                      setReprintReceipt(receipt);
-                    } catch {
-                      window.print();
+                      printInvoicePdf(receipt);
+                    } catch (err) {
+                      console.error('Failed to load invoice for printing:', err);
                     }
                   }}
-                  className="min-h-[42px] px-3 py-2 border rounded-xl text-xs font-semibold flex items-center gap-1.5"
+                  className="min-h-[42px] px-3 py-2 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-xl text-xs font-semibold flex items-center gap-1.5 hover:bg-blue-100"
+                  title="Print or Save A4 Tax Invoice PDF with Company Logo"
+                >
+                  <FileText className="w-4 h-4" />
+                  A4 Invoice
+                </button>
+
+                <button
+                  onClick={async () => {
+                    try {
+                      const receipt = await salesApi.getReceipt(String(s.id));
+                      setReprintReceipt(receipt);
+                    } catch (err) {
+                      console.error('Failed to load receipt:', err);
+                    }
+                  }}
+                  className="min-h-[42px] px-3 py-2 border rounded-xl text-xs font-semibold flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-800"
                 >
                   <Printer className="w-4 h-4" />
                   {t('sales_history.reprint_receipt')}
