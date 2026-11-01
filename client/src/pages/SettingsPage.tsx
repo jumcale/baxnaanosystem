@@ -294,9 +294,9 @@ export const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-xl">
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-100 dark:bg-slate-700">
+                <thead className="bg-slate-100 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
                   <tr>
                     <th className="p-3">Username (Login)</th>
                     <th className="p-3">Branch / Location</th>
@@ -305,26 +305,33 @@ export const SettingsPage: React.FC = () => {
                     <th className="p-3 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
                   {staffList.map((s) => {
                     const isEditing = editingUserId === s.id;
                     return (
-                      <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-750">
-                        <td className="p-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                      <tr
+                        key={s.id}
+                        className={`transition-colors ${
+                          isEditing
+                            ? 'bg-emerald-50/60 dark:bg-emerald-950/30'
+                            : 'hover:bg-slate-100/70 dark:hover:bg-slate-700/40'
+                        }`}
+                      >
+                        <td className="p-3 font-mono font-bold text-slate-900 dark:text-slate-100">
                           {s.username}
                         </td>
                         <td className="p-3">
                           {s.branchCode ? (
-                            <span className="inline-flex items-center gap-1 font-semibold">
+                            <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
                               <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                               {s.branchCode} - {s.branchLocation}
                             </span>
                           ) : (
-                            <span className="text-slate-400">Central / All</span>
+                            <span className="text-slate-500 dark:text-slate-400">Central / All</span>
                           )}
                         </td>
                         <td className="p-3">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-600">
                             {s.role}
                           </span>
                         </td>
@@ -334,14 +341,14 @@ export const SettingsPage: React.FC = () => {
                               type="text"
                               value={editingFullName}
                               onChange={(e) => setEditingFullName(e.target.value)}
-                              className="w-full min-h-[38px] px-3 py-1.5 border rounded-lg dark:bg-slate-900 text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+                              className="w-full min-h-[38px] px-3 py-1.5 border border-emerald-500 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
                               placeholder="e.g. Abdirashid (B1 Cashier)"
                               autoFocus
                             />
                           ) : (
                             <div className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                              <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                              {s.fullName}
+                              <UserCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                              <span>{s.fullName}</span>
                             </div>
                           )}
                         </td>
@@ -352,7 +359,7 @@ export const SettingsPage: React.FC = () => {
                                 type="button"
                                 disabled={isSavingUser}
                                 onClick={() => handleSaveUserFullName(s.id)}
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1"
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-sm"
                               >
                                 <Save className="w-3.5 h-3.5" />
                                 {isSavingUser ? 'Saving...' : 'Save'}
@@ -360,7 +367,7 @@ export const SettingsPage: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setEditingUserId(null)}
-                                className="px-2.5 py-1.5 border rounded-lg text-xs"
+                                className="px-2.5 py-1.5 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs"
                               >
                                 Cancel
                               </button>
@@ -369,7 +376,7 @@ export const SettingsPage: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleStartEditUser(s)}
-                              className="px-3 py-1.5 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto"
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 rounded-lg text-xs font-semibold flex items-center gap-1 ml-auto transition-colors"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                               Change Name
