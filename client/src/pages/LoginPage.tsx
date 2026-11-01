@@ -59,6 +59,8 @@ export const LoginPage: React.FC = () => {
         setError(t('auth.errors.invalid_credentials'));
       } else if (res.status === 429) {
         setError('Too many login attempts. Please wait 15 minutes before trying again.');
+      } else if (res.status === 503) {
+        setError('Server-ka wuu shaqaynayaa, laakiin database-ka lama heli karo. Fadlan bilaaw PostgreSQL oo mar kale isku day.');
       } else {
         setError(`Server error (${res.status}). Please try again.`);
       }

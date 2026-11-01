@@ -19,7 +19,10 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
-  CORS_ORIGIN: z.string().min(1),
+  CORS_ORIGIN: z
+    .string()
+    .min(1)
+    .default(process.env.RENDER_EXTERNAL_URL || 'https://baxnaanosystem.onrender.com'),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -29,4 +32,3 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-
