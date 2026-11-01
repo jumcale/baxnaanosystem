@@ -32,7 +32,6 @@ import {
   settingsApi,
   ServerProductWithFEFO,
   ReceiptData,
-  formatServerSaleToReceipt,
 } from '../api';
 import { ReceiptPreviewModal } from '../components/ReceiptPreviewModal';
 import { NumericInput } from '../components/NumericInput';
@@ -376,8 +375,7 @@ export const SalesPointPage: React.FC = () => {
         })),
       });
 
-      const receipt = formatServerSaleToReceipt(serverSale);
-      setCompletedReceipt(receipt);
+      setCompletedReceipt(serverSale);
       setCurrentSaleId(uuidv4());
       await loadPosCatalog();
     } catch (err: any) {

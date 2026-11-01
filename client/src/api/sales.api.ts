@@ -13,16 +13,25 @@ export type OfflineReceiptData = ReceiptData; // Alias for backward compatibilit
 
 // Helper to format raw server sale into ReceiptData
 export function formatServerSaleToReceipt(sale: any): ReceiptData {
+  if (!sale) {
+    throw new Error('SALE_RECORD_EMPTY');
+  }
+
+  // If already parsed/formatted as ReceiptData
+  if (sale.saleId && !sale.id && Array.isArray(sale.items)) {
+    return ReceiptDataSchema.parse(sale);
+  }
+
   const receipt = {
-    saleId: sale.id,
+    saleId: sale.id || sale.saleId,
     receiptNumber: sale.receiptNumber,
     branchId: sale.branchId,
-    branchCode: sale.branch?.code || 'BX',
-    branchName: sale.branch?.name || 'Baxnaano',
-    branchLocation: sale.branch?.location || '',
-    receiptHeader: sale.branch?.receiptHeader || 'Baxnaano Pharmacy & Veterinary Clinic',
-    receiptFooter: sale.branch?.receiptFooter || 'Thank you for choosing Baxnaano! / Mahadsanid!',
-    cashierName: sale.cashier?.fullName || 'Cashier',
+    branchCode: sale.branch?.code || sale.branchCode || 'BX',
+    branchName: sale.branch?.name || sale.branchName || 'Baxnaano',
+    branchLocation: sale.branch?.location || sale.branchLocation || '',
+    receiptHeader: sale.branch?.receiptHeader || sale.receiptHeader || 'Baxnaano Pharmacy & Veterinary Clinic',
+    receiptFooter: sale.branch?.receiptFooter || sale.receiptFooter || 'Thank you for choosing Baxnaano! / Mahadsanid!',
+    cashierName: sale.cashier?.fullName || sale.cashierName || 'Cashier',
     customerName: sale.customer?.name || sale.customerName || undefined,
     customerPhone: sale.customer?.phone || sale.customerPhone || undefined,
     soldAt: sale.soldAt,
@@ -47,7 +56,7 @@ export function formatServerSaleToReceipt(sale: any): ReceiptData {
       discountUsd: Number(i.discountUsd || 0),
       subtotalUsd: Number(i.subtotalUsd),
       dosageNote: i.dosageNote || null,
-      withdrawalPeriodDays: i.product?.withdrawalPeriodDays ?? null,
+      withdrawalPeriodDays: i.product?.withdrawalPeriodDays ?? i.withdrawalPeriodDays ?? null,
     })),
     payments: (sale.payments || []).map((p: any) => ({
       id: p.id,
