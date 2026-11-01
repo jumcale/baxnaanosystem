@@ -134,9 +134,10 @@ export const QuotationsPage: React.FC = () => {
 
     const firstProd = products.find((p) => p.id === items[0].productId);
     const targetBranch =
-      activeBranchId === 'ALL'
+      user.branchId ||
+      (activeBranchId === 'ALL'
         ? String(firstProd?.branchId || BAXNAANO_BRANCHES.B1.id)
-        : activeBranchId;
+        : activeBranchId);
 
     setIsSaving(true);
     try {
@@ -147,6 +148,7 @@ export const QuotationsPage: React.FC = () => {
         currency: 'USD',
         exchangeRateUsed: form.exchangeRateUsed,
         discountUsd: form.discountUsd,
+        validUntil: form.validUntil ? new Date(form.validUntil).toISOString() : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         items: items.map((i) => ({
           productId: i.productId,
           quantity: i.quantity,

@@ -95,9 +95,10 @@ export const CreditRecordsPage: React.FC = () => {
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetBranch =
-      activeBranchId === 'ALL'
+      user?.branchId ||
+      (activeBranchId === 'ALL'
         ? newCustomer.branchId || BAXNAANO_BRANCHES.B1.id
-        : activeBranchId;
+        : activeBranchId);
 
     try {
       await creditApi.createCustomer({
@@ -126,9 +127,10 @@ export const CreditRecordsPage: React.FC = () => {
     e.preventDefault();
     if (!selectedForPayment || !user) return;
     const targetBranch =
-      activeBranchId === 'ALL'
+      user?.branchId ||
+      (activeBranchId === 'ALL'
         ? String(selectedForPayment.branchId || BAXNAANO_BRANCHES.B1.id)
-        : activeBranchId;
+        : activeBranchId);
 
     try {
       await creditApi.recordRepayment({

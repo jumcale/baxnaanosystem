@@ -145,7 +145,8 @@ export const AppointmentsPage: React.FC = () => {
     e.preventDefault();
     if (!user) return;
     const targetBranch =
-      activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId;
+      user.branchId ||
+      (activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId);
 
     try {
       await appointmentsApi.createAppointment({
@@ -155,10 +156,10 @@ export const AppointmentsPage: React.FC = () => {
         phone: apptForm.phone,
         status: 'BOOKED',
         visitType: (apptForm.visitType === 'FARM_VISIT'
-          ? 'VET_FARM_VISIT'
+          ? 'FARM_VISIT'
           : isVetBranch
-          ? 'VET_CLINIC_VISIT'
-          : 'PHARMACY_CONSULTATION') as any,
+          ? 'CLINIC_VISIT'
+          : 'CONSULTATION') as any,
         scheduledAt: new Date(apptForm.scheduledAt).toISOString(),
         species: isVetBranch ? (apptForm.species as any) : null,
         animalCount: isVetBranch ? Number(apptForm.animalCount) : null,

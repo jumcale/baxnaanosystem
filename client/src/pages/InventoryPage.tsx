@@ -157,7 +157,8 @@ export const InventoryPage: React.FC = () => {
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetBranch =
-      activeBranchId === 'ALL' ? newProduct.branchId : activeBranchId;
+      user?.branchId ||
+      (activeBranchId === 'ALL' ? newProduct.branchId : activeBranchId);
 
     try {
       await inventoryApi.createProduct({
@@ -198,9 +199,10 @@ export const InventoryPage: React.FC = () => {
 
     const selectedProd = products.find((p) => p.id === purchaseForm.productId);
     const targetBranch =
-      activeBranchId === 'ALL'
+      user?.branchId ||
+      (activeBranchId === 'ALL'
         ? String(selectedProd?.branchId || BAXNAANO_BRANCHES.B1.id)
-        : activeBranchId;
+        : activeBranchId);
 
     const buyPrice =
       purchaseForm.buyPriceUsd > 0

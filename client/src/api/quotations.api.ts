@@ -44,7 +44,7 @@ export const quotationsApi = {
   async getQuotations(branchIdOrStatus?: string): Promise<QuotationRecord[]> {
     const isBranch =
       branchIdOrStatus &&
-      (branchIdOrStatus.startsWith('branch-') ||
+      ((branchIdOrStatus.startsWith('b1-') || branchIdOrStatus.startsWith('b2-') || branchIdOrStatus.startsWith('b3-') || branchIdOrStatus.startsWith('branch-')) ||
         ['B1', 'B2', 'B3', 'ALL'].includes(branchIdOrStatus));
     const headers =
       isBranch && branchIdOrStatus !== 'ALL'
@@ -72,6 +72,7 @@ export const quotationsApi = {
     discountUsd?: number;
     taxUsd?: number;
     validDays?: number;
+    validUntil?: string;
     notes?: string;
     items: Array<{
       productId: string;

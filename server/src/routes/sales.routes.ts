@@ -531,12 +531,15 @@ salesRouter.get(
       const {
         fromDate,
         toDate,
+        date,
         cashierId,
         customerId,
         paymentMethod,
         status,
         search,
       } = req.query as Record<string, string | undefined>;
+      const effectiveFrom = fromDate || (date ? `${date}T00:00:00.000Z` : undefined);
+      const effectiveTo = toDate || (date ? `${date}T23:59:59.999Z` : undefined);
 
       const page = Math.max(1, Number(req.query.page) || 1);
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
@@ -546,11 +549,11 @@ salesRouter.get(
         ...(cashierId ? { cashierId } : {}),
         ...(customerId ? { customerId } : {}),
         ...(status ? { status: status as 'COMPLETED' | 'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED' } : {}),
-        ...(fromDate || toDate
+        ...(effectiveFrom || effectiveTo
           ? {
               soldAt: {
-                ...(fromDate ? { gte: new Date(fromDate) } : {}),
-                ...(toDate ? { lte: new Date(`${toDate}T23:59:59.999Z`) } : {}),
+                ...(effectiveFrom ? { gte: new Date(effectiveFrom) } : {}),
+                ...(effectiveTo ? { lte: new Date(effectiveTo) } : {}),
               },
             }
           : {}),

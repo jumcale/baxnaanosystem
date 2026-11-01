@@ -81,9 +81,10 @@ export const ExpensesPage: React.FC = () => {
     e.preventDefault();
     if (!user) return;
     const targetBranch =
-      activeBranchId === 'ALL'
+      user.branchId ||
+      (activeBranchId === 'ALL'
         ? form.branchId || BAXNAANO_BRANCHES.B1.id
-        : activeBranchId;
+        : activeBranchId);
 
     try {
       await expensesApi.createExpense({

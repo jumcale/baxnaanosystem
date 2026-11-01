@@ -150,7 +150,8 @@ export function enforceBranchScope(options: { requireConcreteBranchForWrites?: b
     }
 
     // Reject cross-branch tampering attempts
-    if (requestedBranch && requestedBranch !== user.branchId && requestedBranch !== user.branchCode) {
+    // Reject cross-branch tampering attempts (ignore 'ALL' gracefully if passed by client cache for non-admin)
+    if (requestedBranch && requestedBranch !== 'ALL' && requestedBranch !== user.branchId && requestedBranch !== user.branchCode) {
       res.status(403).json({
         error: 'CROSS_BRANCH_ACCESS_DENIED',
         messageKey: 'branch.errors.cross_branch_denied',

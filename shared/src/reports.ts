@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
 export const DashboardKpisSchema = z.object({
-  todaySalesUsd: z.number(),
-  todayExpensesUsd: z.number(),
-  todayGrossProfitUsd: z.number(),
-  todayNetProfitUsd: z.number(),
-  todayCashUsd: z.number(),
-  todayMobileMoneyUsd: z.number(),
-  todayCreditUsd: z.number(),
+  todaySalesUsd: z.coerce.number(),
+  todayExpensesUsd: z.coerce.number(),
+  todayGrossProfitUsd: z.coerce.number(),
+  todayNetProfitUsd: z.coerce.number(),
+  todayCashUsd: z.coerce.number(),
+  todayMobileMoneyUsd: z.coerce.number(),
+  todayCreditUsd: z.coerce.number(),
 });
 
 export const DashboardAlertsSchema = z.object({
@@ -40,7 +40,7 @@ export const DashboardBranchComparisonItemSchema = z.object({
   name: z.string(),
   type: z.string(),
   location: z.string(),
-  todaySalesUsd: z.number(),
+  todaySalesUsd: z.coerce.number(),
   monthSalesUsd: z.number(),
   monthProfitUsd: z.number(),
   monthNetProfitUsd: z.number(),

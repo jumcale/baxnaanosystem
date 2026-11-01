@@ -15,7 +15,7 @@ export const creditApi = {
   async getCustomers(branchIdOrSearch?: string): Promise<CustomerAging[]> {
     const isBranch =
       branchIdOrSearch &&
-      (branchIdOrSearch.startsWith('branch-') ||
+      ((branchIdOrSearch.startsWith('b1-') || branchIdOrSearch.startsWith('b2-') || branchIdOrSearch.startsWith('b3-') || branchIdOrSearch.startsWith('branch-')) ||
         ['B1', 'B2', 'B3', 'ALL'].includes(branchIdOrSearch));
     const headers =
       isBranch && branchIdOrSearch !== 'ALL'

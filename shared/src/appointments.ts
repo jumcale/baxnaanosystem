@@ -50,7 +50,16 @@ export const CreateAppointmentSchema = z.object({
   patientOrOwner: z.string().min(2).max(120),
   phone: z.string().min(6).max(30),
   status: z.enum(APPOINTMENT_STATUSES).default('BOOKED'),
-  visitType: z.enum(VISIT_TYPES).default('CLINIC_VISIT'),
+  visitType: z
+    .string()
+    .transform((val) => {
+      if (val === 'VET_FARM_VISIT') return 'FARM_VISIT';
+      if (val === 'VET_CLINIC_VISIT') return 'CLINIC_VISIT';
+      if (val === 'PHARMACY_CONSULTATION') return 'CONSULTATION';
+      return val;
+    })
+    .pipe(z.enum(VISIT_TYPES))
+    .default('CLINIC_VISIT'),
   scheduledAt: z.string().refine((val) => !Number.isNaN(Date.parse(val)), {
     message: 'Invalid scheduledAt date',
   }),
@@ -61,7 +70,16 @@ export const CreateAppointmentSchema = z.object({
   symptoms: z.string().max(500).optional().nullable(),
 
   // Veterinary Specific (B2 Arabsiyo & B3 Gabiley - Livestock Health)
-  species: z.enum(SPECIES_ENUM).optional().nullable(),
+  species: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((val) => {
+      if (!val) return null;
+      if (val === 'SHEEP_GOAT') return 'SHEEP';
+      return val;
+    })
+    .pipe(z.enum(SPECIES_ENUM).nullable().optional()),
   animalCount: z.coerce.number().int().positive().optional().nullable(),
   villageOrFarm: z.string().max(150).optional().nullable(),
 
@@ -88,7 +106,11 @@ export const CreateTaskSchema = z.object({
   title: z.string().min(2).max(150),
   description: z.string().max(500).optional().nullable(),
   assignedToId: z.string().uuid().optional().nullable(),
-  status: z.enum(TASK_STATUSES).default('OPEN'),
+  status: z
+    .string()
+    .transform((val) => (val === 'TODO' ? 'OPEN' : val))
+    .pipe(z.enum(TASK_STATUSES))
+    .default('OPEN'),
   priority: z.enum(TASK_PRIORITIES).default('MEDIUM'),
   dueDate: z.string().optional().nullable(),
   relatedEntityId: z.string().optional().nullable(),

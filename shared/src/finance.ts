@@ -185,9 +185,16 @@ export const CreateQuotationSchema = z.object({
   currency: z.enum(CURRENCIES).default('USD'),
   exchangeRateUsed: z.coerce.number().positive(),
   discountUsd: z.coerce.number().nonnegative().default(0),
-  validUntil: z.string().refine((val) => !Number.isNaN(Date.parse(val)), {
-    message: 'Invalid expiry date',
-  }),
+  validUntil: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((val) => {
+      if (!val || Number.isNaN(Date.parse(val))) {
+        return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      }
+      return new Date(val).toISOString();
+    }),
   notes: z.string().max(500).optional().nullable(),
   items: z.array(QuotationItemInputSchema).min(1),
 });
@@ -222,11 +229,11 @@ export const ExpenseRecordSchema = z.object({
   id: z.string(),
   branchId: z.string(),
   category: z.string(),
-  amountUsd: z.number(),
-  amountOriginal: z.number().optional(),
+  amountUsd: z.coerce.number(),
+  amountOriginal: z.coerce.number().optional(),
   currencyPaid: z.enum(['USD', 'SLSH']).optional(),
   currency: z.enum(['USD', 'SLSH']).optional(),
-  exchangeRateUsed: z.number(),
+  exchangeRateUsed: z.coerce.number(),
   paymentMethod: z.string().optional(),
   payee: z.string().optional(),
   description: z.string().nullable().optional(),
@@ -243,11 +250,11 @@ export const ExpenseRecordSchema = z.object({
 export type ExpenseRecord = z.infer<typeof ExpenseRecordSchema>;
 
 export const CustomerAgingBucketSchema = z.object({
-  totalBalanceUsd: z.number(),
-  bucket0to30Usd: z.number(),
-  bucket31to60Usd: z.number(),
-  bucket60PlusUsd: z.number(),
-  overdueCount: z.number().optional(),
+  totalBalanceUsd: z.coerce.number(),
+  bucket0to30Usd: z.coerce.number(),
+  bucket31to60Usd: z.coerce.number(),
+  bucket60PlusUsd: z.coerce.number(),
+  overdueCount: z.coerce.number().optional(),
   isOverdue: z.boolean().optional(),
 });
 
@@ -257,8 +264,8 @@ export const CustomerAgingSchema = z.object({
   name: z.string(),
   phone: z.string(),
   villageOrFarm: z.string().nullable().optional(),
-  creditLimitUsd: z.number(),
-  currentBalanceUsd: z.number(),
+  creditLimitUsd: z.coerce.number(),
+  currentBalanceUsd: z.coerce.number(),
   aging: CustomerAgingBucketSchema,
   entries: z.array(z.any()).default([]),
   creditEntries: z.array(z.any()).default([]),

@@ -258,6 +258,19 @@ inventoryRouter.post(
       }
 
       const data = parsed.data;
+
+      let categoryId = data.categoryId;
+      if (!categoryId || categoryId === 'default-category' || categoryId.length < 30) {
+        const cat = await prisma.category.findFirst({ where: { branchId: data.branchId, deletedAt: null } });
+        categoryId = cat?.id || (await prisma.category.findFirst({ where: { deletedAt: null } }))?.id || '00000000-0000-0000-0000-000000000000';
+      }
+
+      let unitId = data.unitId;
+      if (!unitId || unitId === 'default-unit' || unitId.length < 30) {
+        const u = await prisma.unit.findFirst({ where: { branchId: data.branchId, deletedAt: null } });
+        unitId = u?.id || (await prisma.unit.findFirst({ where: { deletedAt: null } }))?.id || '00000000-0000-0000-0000-000000000000';
+      }
+
       const existing = data.id
         ? await prisma.product.findUnique({ where: { id: data.id } })
         : await prisma.product.findUnique({
@@ -267,8 +280,8 @@ inventoryRouter.post(
       const product = await prisma.product.upsert({
         where: existing ? { id: existing.id } : { branchId_sku: { branchId: data.branchId, sku: data.sku } },
         update: {
-          categoryId: data.categoryId,
-          unitId: data.unitId,
+          categoryId: categoryId!,
+          unitId: unitId!,
           barcode: data.barcode ?? null,
           name: data.name,
           description: data.description ?? null,
@@ -289,8 +302,8 @@ inventoryRouter.post(
         create: {
           id: data.id,
           branchId: data.branchId,
-          categoryId: data.categoryId,
-          unitId: data.unitId,
+          categoryId: categoryId!,
+          unitId: unitId!,
           sku: data.sku,
           barcode: data.barcode ?? null,
           name: data.name,
@@ -364,8 +377,22 @@ inventoryRouter.post(
           if (existingPurchase) return existingPurchase;
         }
 
-        const processedItems = [];
+        let supplierId = data.supplierId;
+        if (!supplierId || supplierId === 'default-supplier' || supplierId.length < 30) {
+          let sup = await tx.supplier.findFirst({ where: { branchId: data.branchId, deletedAt: null } });
+          if (!sup) {
+            sup = await tx.supplier.create({
+              data: {
+                branchId: data.branchId,
+                name: 'Baxnaano General Supplier',
+                phone: '+252630000000',
+              },
+            });
+          }
+          supplierId = sup.id;
+        }
 
+        const processedItems = [];
         for (const item of data.items) {
           const batch = await tx.productBatch.upsert({
             where: {
@@ -379,7 +406,7 @@ inventoryRouter.post(
               expiryDate: new Date(item.expiryDate),
               buyPriceUsd: item.buyPriceUsd,
               sellPriceUsd: item.sellPriceUsd,
-              supplierId: data.supplierId,
+              supplierId: supplierId!,
               deletedAt: null,
               version: { increment: 1 },
             },
@@ -392,7 +419,7 @@ inventoryRouter.post(
               manufacturingDate: item.manufacturingDate ? new Date(item.manufacturingDate) : null,
               buyPriceUsd: item.buyPriceUsd,
               sellPriceUsd: item.sellPriceUsd,
-              supplierId: data.supplierId,
+              supplierId: supplierId!,
               cachedQuantity: 0,
             },
           });
@@ -417,7 +444,7 @@ inventoryRouter.post(
           data: {
             id: data.id,
             branchId: data.branchId,
-            supplierId: data.supplierId,
+            supplierId: supplierId!,
             invoiceNumber: data.invoiceNumber,
             purchaseDate: data.purchaseDate ? new Date(data.purchaseDate) : new Date(),
             totalAmountUsd,
@@ -448,7 +475,7 @@ inventoryRouter.post(
         const unpaidUsd = totalAmountUsd - data.paidAmountUsd;
         if (unpaidUsd > 0) {
           await tx.supplier.update({
-            where: { id: data.supplierId },
+            where: { id: supplierId! },
             data: {
               balanceUsd: { increment: unpaidUsd },
               version: { increment: 1 },
