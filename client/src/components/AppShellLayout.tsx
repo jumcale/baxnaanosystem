@@ -21,6 +21,7 @@ import {
   Globe,
   Building2,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { APP_MODULES, AppModule, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
@@ -79,6 +80,43 @@ export const AppShellLayout: React.FC = () => {
       localStorage.setItem('baxnaano_theme', 'light');
     }
   }, [darkMode]);
+
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
+    return (
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(display-mode: standalone)').matches ||
+        (window.navigator as any).standalone === true)
+    );
+  });
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      if (choice?.outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    } else {
+      alert(
+        i18n.language === 'so'
+          ? 'Si aad ugu shubato aaladdaada:\n• Chrome/Edge (PC/Android): Guji astaanta "Install App" ee address bar-ka.\n• iPhone/iPad (Safari): Taabo badhanka Share ⎋ kadibna dooro "Add to Home Screen".'
+          : 'To install Baxnaano on your device:\n• Chrome/Edge (PC/Android): Click the Install icon in the browser address bar.\n• iPhone/iPad (Safari): Tap the Share button ⎋ and choose "Add to Home Screen".'
+      );
+    }
+  };
 
   const checkHealth = async () => {
     if (!navigator.onLine) {
@@ -336,6 +374,19 @@ export const AppShellLayout: React.FC = () => {
             </button>
 
             <div className="flex items-center gap-1.5">
+              {/* Install PWA App Button (shown when not already standalone) */}
+              {!isStandalone && (
+                <button
+                  type="button"
+                  onClick={handleInstallClick}
+                  title="Install Baxnaano App directly on your device"
+                  className="h-9 px-2.5 sm:px-3 rounded-xl border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>Install App</span>
+                </button>
+              )}
+
               {/* Flexible Language Switcher Button */}
               <button
                 type="button"
