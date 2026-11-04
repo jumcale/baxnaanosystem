@@ -132,10 +132,10 @@ export const SettingsPage: React.FC = () => {
         })();
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6 space-y-6">
-      <h1 className="text-2xl font-bold flex items-center gap-2">
-        <Settings className="w-7 h-7 text-emerald-600" />
-        {t('settings.title')}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6 space-y-4">
+      <h1 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2">
+        <Settings className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
+        <span>{t('settings.title')}</span>
       </h1>
 
       {statusBanner && (

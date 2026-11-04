@@ -22,6 +22,9 @@ import {
   Building2,
   AlertTriangle,
   Download,
+  Menu,
+  X,
+  ChevronRight,
 } from 'lucide-react';
 import { APP_MODULES, AppModule, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
@@ -56,7 +59,6 @@ export const AppShellLayout: React.FC = () => {
   const location = useLocation();
   const {
     user,
-    accessToken,
     activeBranchId,
     setActiveBranchId,
     canViewModule,
@@ -66,9 +68,15 @@ export const AppShellLayout: React.FC = () => {
   const isOnline = useOnlineStatus();
   const [isServerHealthy, setIsServerHealthy] = useState<boolean>(true);
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [darkMode, setDarkMode] = useState<boolean>(
     () => localStorage.getItem('baxnaano_theme') === 'dark'
   );
+
+  // Close mobile drawer automatically on route change
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -82,7 +90,7 @@ export const AppShellLayout: React.FC = () => {
   }, [darkMode]);
 
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
+  const [isStandalone] = useState<boolean>(() => {
     return (
       typeof window !== 'undefined' &&
       (window.matchMedia('(display-mode: standalone)').matches ||
@@ -145,7 +153,6 @@ export const AppShellLayout: React.FC = () => {
     window.addEventListener('offline', onOffline);
     window.addEventListener('focus', onWindowFocus);
 
-    // Periodic live health check every 15 seconds
     const interval = setInterval(checkHealth, 15000);
 
     return () => {
@@ -168,20 +175,25 @@ export const AppShellLayout: React.FC = () => {
     (b) => b.id === activeBranchId || b.code === activeBranchId
   );
 
+  // Quick bottom navigation modules for mobile
+  const mobilePrimaryTabs: AppModule[] = (
+    ['DASHBOARD', 'SALES_POINT', 'INVENTORY', 'CREDIT_RECORDS'] as AppModule[]
+  ).filter((m) => visibleModules.includes(m));
+
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-slate-100/80 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
-      {/* Left Sidebar Navigation (Sticky on Desktop, Compact & Scannable) */}
-      <aside className="print:hidden w-full md:w-64 md:h-screen md:sticky md:top-0 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-slate-200/90 dark:border-slate-800 flex flex-col justify-between shrink-0 z-20">
+    <div className="min-h-screen flex flex-col md:flex-row bg-slate-100/80 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased pb-16 md:pb-0">
+      {/* Desktop Left Sidebar Navigation (Hidden on Mobile) */}
+      <aside className="print:hidden hidden md:flex md:w-60 md:h-screen md:sticky md:top-0 bg-white dark:bg-slate-900 border-r border-slate-200/90 dark:border-slate-800 flex-col justify-between shrink-0 z-20">
         <div className="flex flex-col flex-1 min-h-0">
-          {/* Uncluttered Brand Identity Header */}
+          {/* Brand Identity Header */}
           <div className="h-16 px-4 border-b border-slate-200/80 dark:border-slate-800 flex items-center gap-3 shrink-0">
             <img
               src="/baxnaano-logo.jpg"
               alt="Baxnaano Logo"
-              className="w-10 h-10 rounded-full object-cover border-2 border-emerald-500/30 shadow-sm shrink-0"
+              className="w-9 h-9 rounded-full object-cover border-2 border-emerald-500/30 shadow-sm shrink-0"
             />
             <div className="min-w-0 flex-1">
-              <div className="font-extrabold text-base text-emerald-700 dark:text-emerald-400 tracking-tight whitespace-nowrap leading-tight">
+              <div className="font-extrabold text-sm text-emerald-700 dark:text-emerald-400 tracking-tight whitespace-nowrap leading-tight">
                 BAXNAANO SYSTEM
               </div>
               <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate mt-0.5">
@@ -190,8 +202,8 @@ export const AppShellLayout: React.FC = () => {
             </div>
           </div>
 
-          {/* Categorized Navigation Links (Desktop) */}
-          <nav className="hidden md:flex flex-col flex-1 overflow-y-auto px-3 py-3 space-y-4">
+          {/* Categorized Navigation Links */}
+          <nav className="flex flex-col flex-1 overflow-y-auto px-3 py-3 space-y-4">
             {NAV_GROUPS.map((group) => {
               const groupModules = visibleModules.filter(
                 (mod) => MODULE_ROUTE_CONFIG[mod].group === group.key
@@ -228,35 +240,10 @@ export const AppShellLayout: React.FC = () => {
               );
             })}
           </nav>
-
-          {/* Horizontal Scroll Navigation (Mobile/Tablet) */}
-          <nav className="flex md:hidden overflow-x-auto px-3 py-2 gap-1.5 border-t border-slate-100 dark:border-slate-800">
-            {visibleModules.map((mod) => {
-              const cfg = MODULE_ROUTE_CONFIG[mod];
-              const Icon = cfg.icon;
-              return (
-                <NavLink
-                  key={mod}
-                  to={cfg.path}
-                  end={cfg.path === '/'}
-                  className={({ isActive }) =>
-                    `px-3 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 whitespace-nowrap transition ${
-                      isActive
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800'
-                    }`
-                  }
-                >
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span>{t(`nav.${mod}`)}</span>
-                </NavLink>
-              );
-            })}
-          </nav>
         </div>
 
         {/* User Profile & Logout Footer */}
-        <div className="hidden md:flex px-4 py-3 border-t border-slate-200/80 dark:border-slate-800 items-center justify-between bg-slate-50/60 dark:bg-slate-900/50 shrink-0">
+        <div className="px-4 py-3 border-t border-slate-200/80 dark:border-slate-800 flex items-center justify-between bg-slate-50/60 dark:bg-slate-900/50 shrink-0">
           <div className="min-w-0 pr-2">
             <div className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
               {user?.fullName}
@@ -281,121 +268,270 @@ export const AppShellLayout: React.FC = () => {
         </div>
       </aside>
 
+      {/* Mobile Slide-Out Navigation Drawer */}
+      {isMobileMenuOpen && (
+        <div className="print:hidden fixed inset-0 z-50 md:hidden flex">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+
+          {/* Drawer Content */}
+          <div className="relative w-72 max-w-[82vw] bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col justify-between z-10 border-r border-slate-200 dark:border-slate-800">
+            {/* Drawer Header */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <img
+                  src="/baxnaano-logo.jpg"
+                  alt="Baxnaano Logo"
+                  className="w-9 h-9 rounded-full object-cover border border-emerald-500/40 shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="font-extrabold text-sm text-emerald-600 dark:text-emerald-400 tracking-tight truncate">
+                    BAXNAANO SYSTEM
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    Pharmacy & Veterinary ERP
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Drawer Categorized Navigation Links */}
+            <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+              {NAV_GROUPS.map((group) => {
+                const groupModules = visibleModules.filter(
+                  (mod) => MODULE_ROUTE_CONFIG[mod].group === group.key
+                );
+                if (groupModules.length === 0) return null;
+
+                return (
+                  <div key={group.key} className="space-y-1">
+                    <div className="px-3 text-[10px] font-bold tracking-wider uppercase text-slate-400 dark:text-slate-500">
+                      {i18n.language === 'so' ? group.labelSo : group.labelEn}
+                    </div>
+                    {groupModules.map((mod) => {
+                      const cfg = MODULE_ROUTE_CONFIG[mod];
+                      const Icon = cfg.icon;
+                      return (
+                        <NavLink
+                          key={mod}
+                          to={cfg.path}
+                          end={cfg.path === '/'}
+                          onClick={() => setIsMobileMenuOpen(false)}
+                          className={({ isActive }) =>
+                            `px-3 py-2.5 rounded-xl font-semibold text-xs flex items-center justify-between transition-all ${
+                              isActive
+                                ? 'bg-emerald-600 text-white shadow-sm'
+                                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`
+                          }
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <Icon className="w-4 h-4 shrink-0" />
+                            <span className="truncate">{t(`nav.${mod}`)}</span>
+                          </div>
+                          <ChevronRight className="w-3.5 h-3.5 opacity-50 shrink-0" />
+                        </NavLink>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+
+              {!isStandalone && (
+                <div className="pt-2 px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      handleInstallClick();
+                    }}
+                    className="w-full py-2.5 px-3 rounded-xl border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Install Baxnaano App</span>
+                  </button>
+                </div>
+              )}
+            </nav>
+
+            {/* Drawer User Footer */}
+            <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                    {user?.fullName}
+                  </div>
+                  <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                    {user?.role} • {activeBranchId === 'ALL' ? 'All Branches' : activeBranchMeta?.code || activeBranchId}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={logout}
+                className="w-full py-2 px-3 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 text-xs font-bold flex items-center justify-center gap-2"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>{t('auth.logout')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Workspace Column */}
       <div className="flex-1 flex flex-col min-w-0">
         {(!isOnline || !isServerHealthy) && (
-          <div className="bg-amber-500 text-slate-950 font-bold px-4 py-2.5 text-center text-xs md:text-sm shadow-md flex items-center justify-center gap-2 sticky top-0 z-50">
+          <div className="bg-amber-500 text-slate-950 font-bold px-3 py-2 text-center text-xs shadow-md flex items-center justify-center gap-2 sticky top-0 z-40">
             <AlertTriangle className="w-4 h-4 shrink-0 text-slate-950" />
-            <span>
-              Offline mode is no longer supported. Please reconnect to record sales or manage stock. / Habka khadka la'aanta lama taageero. Fadlan ku xidhnow internet-ka si aad wax u iibiso ama u maamusho alaabta.
+            <span className="truncate">
+              {i18n.language === 'so'
+                ? 'Fadlan ku xidhnow internet-ka si aad wax u iibiso.'
+                : 'Please reconnect to the internet to record sales or manage stock.'}
             </span>
           </div>
         )}
-        {/* Sticky Top Utility Bar — Responsive Two-Row on Mobile, Single-Row on Desktop */}
-        <header className="print:hidden sticky top-0 z-10 min-h-[4rem] py-2 px-3 md:px-6 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-slate-200/90 dark:border-slate-800 flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between gap-2 shrink-0">
-          {/* Left / Bottom on Mobile: Branch Scope Selector / Indicator */}
-          <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto order-2 sm:order-1">
-            <div className="hidden sm:flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">
-              <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="hidden lg:inline">Branch Scope:</span>
+
+        {/* Sticky Top Header Bar */}
+        <header className="print:hidden sticky top-0 z-20 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-b border-slate-200/90 dark:border-slate-800 px-3 py-2 md:px-6 md:py-2.5 space-y-2 shrink-0">
+          {/* Top Row: Menu Button & Brand (Mobile) / Branch Scope (Desktop) + Utility Controls */}
+          <div className="flex items-center justify-between gap-2">
+            {/* Mobile Left: Hamburger Menu Button + Brand Title */}
+            <div className="flex md:hidden items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(true)}
+                aria-label="Open Menu"
+                className="h-9 w-9 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition shrink-0"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <img
+                src="/baxnaano-logo.jpg"
+                alt="Baxnaano"
+                className="w-7 h-7 rounded-full object-cover border border-emerald-500/40 shrink-0"
+              />
+              <span className="font-extrabold text-xs sm:text-sm tracking-tight text-emerald-700 dark:text-emerald-400 truncate">
+                BAXNAANO
+              </span>
             </div>
 
-            {user?.role === 'ADMIN' ? (
-              <div className="grid grid-cols-4 sm:flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200/70 dark:border-slate-700 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => setActiveBranchId('ALL')}
-                  className={`px-2 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-bold transition whitespace-nowrap text-center ${
-                    activeBranchId === 'ALL'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <span className="sm:hidden">All</span>
-                  <span className="hidden sm:inline">All (B1–B3)</span>
-                </button>
-                {Object.values(BAXNAANO_BRANCHES).map((b) => {
-                  const isSelected = activeBranchId === b.id || activeBranchId === b.code;
-                  return (
-                    <button
-                      key={b.id}
-                      type="button"
-                      onClick={() => setActiveBranchId(b.id)}
-                      title={`${b.code}: ${b.name} (${b.location})`}
-                      className={`px-2 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-bold transition whitespace-nowrap text-center ${
-                        isSelected
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                    >
-                      <span className="md:hidden">{b.code}</span>
-                      <span className="hidden md:inline">
+            {/* Desktop Left: Branch Scope Selector */}
+            <div className="hidden md:flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                <Building2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="hidden lg:inline">Branch Scope:</span>
+              </div>
+
+              {user?.role === 'ADMIN' ? (
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200/70 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setActiveBranchId('ALL')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+                      activeBranchId === 'ALL'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    All (B1–B3)
+                  </button>
+                  {Object.values(BAXNAANO_BRANCHES).map((b) => {
+                    const isSelected = activeBranchId === b.id || activeBranchId === b.code;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setActiveBranchId(b.id)}
+                        title={`${b.code}: ${b.name} (${b.location})`}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
                         {b.code} • {b.location}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-emerald-800 dark:text-emerald-300 truncate w-full sm:w-auto text-center sm:text-left">
-                {activeBranchMeta
-                  ? `${activeBranchMeta.code} — ${activeBranchMeta.name} (${activeBranchMeta.location})`
-                  : activeBranchId}
-              </div>
-            )}
-          </div>
-
-          {/* Right / Top on Mobile: Server Health Status, Language Toggle, Theme Toggle & Logout */}
-          <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0 order-1 sm:order-2">
-            {/* Live Authoritative Server Connection Indicator */}
-            <button
-              type="button"
-              onClick={checkHealth}
-              title={
-                isServerHealthy
-                  ? t('sync.server_connected')
-                  : t('sync.server_disconnected')
-              }
-              className={`h-9 px-3 rounded-xl border text-xs font-semibold flex items-center gap-2 transition ${
-                isServerHealthy
-                  ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
-                  : 'bg-red-50 dark:bg-red-950/60 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 animate-pulse'
-              }`}
-            >
-              {isServerHealthy ? (
-                <Wifi className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
-                <WifiOff className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
+                <div className="px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-emerald-800 dark:text-emerald-300 truncate">
+                  {activeBranchMeta
+                    ? `${activeBranchMeta.code} — ${activeBranchMeta.name} (${activeBranchMeta.location})`
+                    : activeBranchId}
+                </div>
               )}
-              <span>{isServerHealthy ? t('sync.online') : t('sync.offline')}</span>
-              {isCheckingHealth && (
-                <RefreshCw className="w-3 h-3 animate-spin text-slate-400" />
-              )}
-            </button>
+            </div>
 
-            <div className="flex items-center gap-1.5">
-              {/* Install PWA App Button (shown when not already standalone) */}
+            {/* Right Controls: Compact & Non-Wrapping on Both Mobile and Desktop */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Live Server Indicator (Single-line, never wraps) */}
+              <button
+                type="button"
+                onClick={checkHealth}
+                title={
+                  isServerHealthy
+                    ? t('sync.server_connected')
+                    : t('sync.server_disconnected')
+                }
+                className={`h-8 sm:h-9 px-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition shrink-0 ${
+                  isServerHealthy
+                    ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-red-50 dark:bg-red-950/60 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 animate-pulse'
+                }`}
+              >
+                {isServerHealthy ? (
+                  <Wifi className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : (
+                  <WifiOff className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0" />
+                )}
+                <span className="hidden sm:inline">
+                  {isServerHealthy ? t('sync.online') : t('sync.offline')}
+                </span>
+                <span className="sm:hidden">
+                  {isServerHealthy ? (i18n.language === 'so' ? 'Toos' : 'Live') : 'Offline'}
+                </span>
+                {isCheckingHealth && (
+                  <RefreshCw className="w-3 h-3 animate-spin text-slate-400 shrink-0" />
+                )}
+              </button>
+
+              {/* Install PWA Button */}
               {!isStandalone && (
                 <button
                   type="button"
                   onClick={handleInstallClick}
                   title="Install Baxnaano App directly on your device"
-                  className="h-9 px-2.5 sm:px-3 rounded-xl border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition shadow-sm"
+                  className="h-8 sm:h-9 px-2 sm:px-3 rounded-xl border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-[11px] sm:text-xs font-bold flex items-center gap-1 whitespace-nowrap transition shadow-xs shrink-0"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>Install App</span>
+                  <span className="hidden xs:inline sm:inline">Install</span>
                 </button>
               )}
 
-              {/* Flexible Language Switcher Button */}
+              {/* Language Switcher Button */}
               <button
                 type="button"
                 onClick={toggleLanguage}
                 title="Switch Language (English / Af-Soomaali)"
-                className="h-9 px-2.5 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition"
+                className="h-8 sm:h-9 px-2 sm:px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-[11px] sm:text-xs font-bold flex items-center gap-1 whitespace-nowrap transition shrink-0"
               >
                 <Globe className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>{i18n.language === 'so' ? 'SO • Soomaali' : 'EN • English'}</span>
+                <span className="sm:hidden">{i18n.language === 'so' ? 'SO' : 'EN'}</span>
+                <span className="hidden sm:inline">
+                  {i18n.language === 'so' ? 'SO • Soomaali' : 'EN • English'}
+                </span>
               </button>
 
               {/* Dark / Light Mode Toggle */}
@@ -403,7 +539,7 @@ export const AppShellLayout: React.FC = () => {
                 type="button"
                 onClick={() => setDarkMode(!darkMode)}
                 title="Toggle Light / Dark Theme"
-                className="h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center justify-center transition shrink-0"
+                className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center justify-center transition shrink-0"
               >
                 {darkMode ? (
                   <Sun className="w-4 h-4 text-amber-400" />
@@ -412,17 +548,7 @@ export const AppShellLayout: React.FC = () => {
                 )}
               </button>
 
-              {/* Mobile Logout Button */}
-              <button
-                type="button"
-                onClick={logout}
-                title={t('auth.logout')}
-                className="md:hidden h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/40 text-slate-600 dark:text-slate-300 hover:text-red-600 flex items-center justify-center transition shrink-0"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-
-              {/* Quick POS Launch Button (when not already on /pos) */}
+              {/* Quick POS Launch Button on Desktop */}
               {location.pathname !== '/pos' && canViewModule('SALES_POINT') && (
                 <button
                   type="button"
@@ -435,30 +561,107 @@ export const AppShellLayout: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Mobile Second Row: Compact Segmented Branch Bar (Admin Only) */}
+          {user?.role === 'ADMIN' && (
+            <div className="grid grid-cols-4 md:hidden gap-1 bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl border border-slate-200/70 dark:border-slate-700/80">
+              <button
+                type="button"
+                onClick={() => setActiveBranchId('ALL')}
+                className={`py-1 rounded-lg text-[11px] font-bold transition text-center ${
+                  activeBranchId === 'ALL'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                All
+              </button>
+              {Object.values(BAXNAANO_BRANCHES).map((b) => {
+                const isSelected = activeBranchId === b.id || activeBranchId === b.code;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setActiveBranchId(b.id)}
+                    className={`py-1 rounded-lg text-[11px] font-bold transition text-center ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    {b.code}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </header>
 
         {/* Server Disconnected Warning Banner */}
         {!isServerHealthy && (
-          <div className="bg-red-600 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-3 shadow-sm shrink-0">
-            <div className="flex items-center gap-2">
-              <WifiOff className="w-4 h-4 shrink-0 animate-bounce" />
-              <span>{t('sync.server_disconnected')}</span>
+          <div className="bg-red-600 text-white px-3 py-1.5 text-xs font-semibold flex items-center justify-between gap-2 shadow-sm shrink-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <WifiOff className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{t('sync.server_disconnected')}</span>
             </div>
             <button
               onClick={checkHealth}
               disabled={isCheckingHealth}
-              className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded text-xs font-bold transition shrink-0 whitespace-nowrap"
+              className="bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded text-[11px] font-bold transition shrink-0 whitespace-nowrap"
             >
-              {isCheckingHealth ? t('sync.server_reconnecting') : 'Retry Connection'}
+              {isCheckingHealth ? '...' : 'Retry'}
             </button>
           </div>
         )}
 
         {/* Main Page Content */}
-        <main className="flex-1">
+        <main className="flex-1 min-w-0">
           <Outlet />
         </main>
       </div>
+
+      {/* Fixed Bottom Navigation Bar for Mobile Users */}
+      <nav className="print:hidden md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-slate-200 dark:border-slate-800 px-2 py-1 flex items-center justify-around shadow-lg">
+        {mobilePrimaryTabs.map((mod) => {
+          const cfg = MODULE_ROUTE_CONFIG[mod];
+          const Icon = cfg.icon;
+          return (
+            <NavLink
+              key={mod}
+              to={cfg.path}
+              end={cfg.path === '/'}
+              className={({ isActive }) =>
+                `flex flex-col items-center justify-center py-1 px-2 rounded-xl min-w-[60px] transition ${
+                  isActive
+                    ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                    : 'text-slate-500 dark:text-slate-400 font-medium'
+                }`
+              }
+            >
+              <Icon className="w-4 h-4 mb-0.5" />
+              <span className="text-[10px] leading-tight truncate max-w-[68px]">
+                {t(`nav.${mod}`)}
+              </span>
+            </NavLink>
+          );
+        })}
+
+        {/* Menu Drawer Trigger Tab */}
+        <button
+          type="button"
+          onClick={() => setIsMobileMenuOpen(true)}
+          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl min-w-[60px] transition ${
+            isMobileMenuOpen
+              ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 font-medium'
+          }`}
+        >
+          <Menu className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] leading-tight">
+            {i18n.language === 'so' ? 'Menu' : 'Menu'}
+          </span>
+        </button>
+      </nav>
     </div>
   );
 };

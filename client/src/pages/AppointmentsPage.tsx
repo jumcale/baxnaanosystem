@@ -262,86 +262,87 @@ export const AppointmentsPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6 space-y-6">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6 space-y-4">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Stethoscope className="w-7 h-7 text-emerald-600" />
-            {t('appointments.title')}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2">
+            <Stethoscope className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
+            <span className="truncate">{t('appointments.title')}</span>
           </h1>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 truncate">
             {currentBranchMeta.code} - {currentBranchMeta.name} ({currentBranchMeta.location})
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setShowApptModal(true)}
-            className="min-h-[48px] px-5 py-2.5 bg-emerald-600 text-white font-semibold rounded-xl flex items-center gap-2"
+            className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm transition"
           >
-            <Plus className="w-5 h-5" />
-            {t('appointments.new_appointment')}
+            <Plus className="w-4 h-4" />
+            <span>{t('appointments.new_appointment')}</span>
           </button>
           <button
             onClick={() => setShowTaskModal(true)}
-            className="min-h-[48px] px-5 py-2.5 bg-slate-800 dark:bg-slate-700 text-white font-semibold rounded-xl flex items-center gap-2"
+            className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm transition"
           >
-            <CheckSquare className="w-5 h-5" />
-            {t('appointments.new_task')}
+            <CheckSquare className="w-4 h-4" />
+            <span>{t('appointments.new_task')}</span>
           </button>
         </div>
       </div>
 
       {/* View Switcher Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
-        <div className="flex gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <div className="flex overflow-x-auto no-scrollbar gap-1.5">
           <button
             onClick={() => setView('list')}
-            className={`min-h-[44px] px-4 py-2 rounded-xl font-medium flex items-center gap-2 ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap ${
               view === 'list'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-white dark:bg-slate-800 border'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
             }`}
           >
-            <List className="w-4 h-4" />
-            {t('appointments.tabs.list')}
+            <List className="w-3.5 h-3.5" />
+            <span>{t('appointments.tabs.list')}</span>
           </button>
           <button
             onClick={() => setView('calendar')}
-            className={`min-h-[44px] px-4 py-2 rounded-xl font-medium flex items-center gap-2 ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap ${
               view === 'calendar'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-white dark:bg-slate-800 border'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
             }`}
           >
-            <Calendar className="w-4 h-4" />
-            {t('appointments.tabs.calendar')}
+            <Calendar className="w-3.5 h-3.5" />
+            <span>{t('appointments.tabs.calendar')}</span>
           </button>
           <button
             onClick={() => setView('tasks')}
-            className={`min-h-[44px] px-4 py-2 rounded-xl font-medium flex items-center gap-2 ${
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap ${
               view === 'tasks'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-white dark:bg-slate-800 border'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
             }`}
           >
-            <CheckSquare className="w-4 h-4" />
-            {t('appointments.tabs.tasks')} (
-            {tasks.filter((tk) => tk.status !== 'COMPLETED').length})
+            <CheckSquare className="w-3.5 h-3.5" />
+            <span>
+              {t('appointments.tabs.tasks')} ({tasks.filter((tk) => tk.status !== 'COMPLETED').length})
+            </span>
           </button>
         </div>
 
         {view !== 'tasks' && (
-          <div className="flex items-center gap-2">
+          <div className="flex overflow-x-auto no-scrollbar items-center gap-1.5">
             {(['ALL', ...APPOINTMENT_STATUSES] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap ${
                   statusFilter === st
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
-                    : 'bg-white dark:bg-slate-800 border'
+                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
                 }`}
               >
                 {st === 'ALL' ? 'ALL' : t(`appointments.status.${st}`)}
@@ -395,22 +396,24 @@ export const AppointmentsPage: React.FC = () => {
             return (
               <div
                 key={appt.id}
-                className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                className="bg-white dark:bg-slate-800 p-3.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200/90 dark:border-slate-700/80 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-3"
               >
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="space-y-1.5 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <span
-                      className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${
+                      className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
                         statusColors[appt.status]
                       }`}
                     >
                       {t(`appointments.status.${appt.status}`)}
                     </span>
-                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700">
                       {t(`appointments.visit_type.${appt.visitType}`)}
                     </span>
-                    <h3 className="font-bold text-lg">{appt.patientOrOwner}</h3>
-                    <span className="text-xs font-mono text-slate-500">{appt.phone}</span>
+                    <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
+                      {appt.patientOrOwner}
+                    </h3>
+                    <span className="text-[11px] font-mono text-slate-500">{appt.phone}</span>
                     {appt.reminderSent && (
                       <span className="text-[11px] bg-green-50 text-green-700 px-2 py-0.5 rounded border border-green-200">
                         ✓ {t('appointments.shared.reminder_sent_badge')}

@@ -7,6 +7,7 @@ import {
   CheckCircle,
   XCircle,
   Repeat,
+  FileText,
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
@@ -19,7 +20,6 @@ export const ExpensesPage: React.FC = () => {
 
   const [expenses, setExpenses] = useState<Array<any>>([]);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
 
   const [form, setForm] = useState({
     branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
@@ -36,7 +36,6 @@ export const ExpensesPage: React.FC = () => {
   });
 
   const loadExpenses = async () => {
-    setIsLoading(true);
     try {
       const list = await expensesApi.getExpenses({
         branchId: activeBranchId,
@@ -44,8 +43,6 @@ export const ExpensesPage: React.FC = () => {
       setExpenses(list);
     } catch (err) {
       console.error('Failed to load expenses:', err);
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -94,8 +91,8 @@ export const ExpensesPage: React.FC = () => {
         amountOriginal: Number(form.amountOriginal),
         exchangeRateUsed: Number(form.exchangeRateUsed),
         paymentMethod: form.paymentMethod,
-        payee: form.payee,
-        description: form.description,
+        payee: form.payee.trim(),
+        description: form.description.trim() || undefined,
         receiptPhotoData: form.receiptPhotoData,
         isRecurring: form.isRecurring,
         recurringFrequency: form.isRecurring ? form.recurringFrequency : undefined,
@@ -127,125 +124,139 @@ export const ExpensesPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Wallet className="w-7 h-7 text-emerald-600" />
-          {t('expenses.title')}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2 min-w-0">
+          <Wallet className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
+          <span className="truncate">{t('expenses.title')}</span>
         </h1>
         {canPerform('expenses:create') && (
           <button
             onClick={() => setShowAddModal(true)}
-            className="min-h-[48px] px-5 py-2.5 bg-emerald-600 text-white font-semibold rounded-xl flex items-center gap-2"
+            className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shrink-0 transition"
           >
-            <Plus className="w-5 h-5" />
-            {t('expenses.add_expense')}
+            <Plus className="w-4 h-4" />
+            <span>{t('expenses.add_expense')}</span>
           </button>
         )}
       </div>
 
       {/* Expense Cards */}
-      <div className="grid grid-cols-1 gap-3">
-        {expenses.map((exp) => {
-          const status = String(exp.approvalStatus || 'PENDING');
-          return (
-            <div
-              key={String(exp.id)}
-              className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row md:items-center justify-between gap-4"
-            >
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-bold uppercase px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-700">
-                    {String(exp.category)}
-                  </span>
-                  <h3 className="font-bold text-base">{String(exp.payee)}</h3>
-                  {Boolean(exp.isRecurring) && (
-                    <span className="text-xs bg-sky-100 text-sky-800 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1">
-                      <Repeat className="w-3 h-3" />
-                      {String(exp.recurringFrequency)}
+      <div className="grid grid-cols-1 gap-2.5 sm:gap-3">
+        {expenses.length === 0 ? (
+          <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center text-xs sm:text-sm text-slate-400">
+            No expenses recorded yet for this branch scope.
+          </div>
+        ) : (
+          expenses.map((exp) => {
+            const status = String(exp.approvalStatus || 'PENDING');
+            return (
+              <div
+                key={String(exp.id)}
+                className="bg-white dark:bg-slate-800 p-3.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200/90 dark:border-slate-700/80 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200">
+                      {String(exp.category)}
                     </span>
-                  )}
-                  <span
-                    className={`text-xs px-2.5 py-0.5 rounded-full font-bold ${
-                      status === 'APPROVED'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : status === 'REJECTED'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {t(`expenses.status_${status}`)}
-                  </span>
-                </div>
-                {Boolean(exp.description) && (
-                  <p className="text-xs text-slate-500">{String(exp.description)}</p>
-                )}
-                <div className="text-[11px] text-slate-400">
-                  {new Date(String(exp.expenseDate)).toLocaleString()} | Method:{' '}
-                  {String(exp.paymentMethod)}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                {Boolean(exp.receiptPhotoData) && (
-                  <img
-                    src={String(exp.receiptPhotoData)}
-                    alt="Receipt"
-                    className="w-12 h-12 object-cover rounded-lg border"
-                  />
-                )}
-
-                <div className="text-right">
-                  <div className="text-lg font-extrabold text-slate-900 dark:text-white">
-                    ${Number(exp.amountUsd || 0).toFixed(2)}
+                    <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
+                      {String(exp.payee)}
+                    </h3>
+                    {Boolean(exp.isRecurring) && (
+                      <span className="text-[11px] bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                        <Repeat className="w-3 h-3" />
+                        {String(exp.recurringFrequency)}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                        status === 'APPROVED'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                          : status === 'REJECTED'
+                          ? 'bg-red-100 dark:bg-red-950/60 text-red-800 dark:text-red-300'
+                          : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                      }`}
+                    >
+                      {t(`expenses.status_${status}`)}
+                    </span>
                   </div>
-                  {exp.currencyPaid === 'SLSH' && (
-                    <div className="text-xs text-slate-400">
-                      ({Number(exp.amountOriginal).toLocaleString()} SLSH)
+                  {Boolean(exp.description) && (
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed flex items-start gap-1.5 pt-0.5">
+                      <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                      <span>{String(exp.description)}</span>
+                    </p>
+                  )}
+                  <div className="text-[11px] text-slate-400">
+                    {new Date(String(exp.expenseDate)).toLocaleString()} • {String(exp.paymentMethod)}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
+                  {Boolean(exp.receiptPhotoData) && (
+                    <img
+                      src={String(exp.receiptPhotoData)}
+                      alt="Receipt"
+                      className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700"
+                    />
+                  )}
+
+                  <div className="text-left sm:text-right">
+                    <div className="text-base sm:text-lg font-bold tabular-nums text-slate-900 dark:text-white">
+                      ${Number(exp.amountUsd || 0).toFixed(2)}
+                    </div>
+                    {exp.currencyPaid === 'SLSH' && (
+                      <div className="text-[11px] text-slate-400 tabular-nums">
+                        ({Number(exp.amountOriginal).toLocaleString()} SLSH)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Branch Manager / Admin Approval Actions */}
+                  {status === 'PENDING' && canPerform('expenses:approve') && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleApproval(String(exp.id), 'APPROVED')}
+                        className="min-h-[38px] px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>{t('expenses.approve')}</span>
+                      </button>
+                      <button
+                        onClick={() => handleApproval(String(exp.id), 'REJECTED')}
+                        className="min-h-[38px] px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>{t('expenses.reject')}</span>
+                      </button>
                     </div>
                   )}
                 </div>
-
-                {/* Branch Manager / Admin Approval Actions */}
-                {status === 'PENDING' && canPerform('expenses:approve') && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleApproval(String(exp.id), 'APPROVED')}
-                      className="min-h-[42px] px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl flex items-center gap-1"
-                    >
-                      <CheckCircle className="w-4 h-4" />
-                      {t('expenses.approve')}
-                    </button>
-                    <button
-                      onClick={() => handleApproval(String(exp.id), 'REJECTED')}
-                      className="min-h-[42px] px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-xl flex items-center gap-1"
-                    >
-                      <XCircle className="w-4 h-4" />
-                      {t('expenses.reject')}
-                    </button>
-                  </div>
-                )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       {/* Add Expense Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 overflow-y-auto">
           <form
             onSubmit={handleCreate}
-            className="bg-white dark:bg-slate-800 p-6 rounded-2xl max-w-md w-full space-y-4"
+            className="bg-white dark:bg-slate-800 p-5 sm:p-6 rounded-t-2xl sm:rounded-2xl max-w-md w-full space-y-3.5 shadow-2xl"
           >
-            <h2 className="text-lg font-bold">{t('expenses.add_expense')}</h2>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+              {t('expenses.add_expense')}
+            </h2>
 
             <div>
-              <label className="block text-xs font-semibold mb-1">{t('expenses.category')}</label>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                {t('expenses.category')}
+              </label>
               <select
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
-                className="w-full min-h-[46px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                className="w-full min-h-[44px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
               >
                 {EXPENSE_CATEGORIES.map((c) => (
                   <option key={c} value={c}>
@@ -255,39 +266,71 @@ export const ExpensesPage: React.FC = () => {
               </select>
             </div>
 
-            <input
-              required
-              placeholder={t('expenses.payee')}
-              value={form.payee}
-              onChange={(e) => setForm({ ...form, payee: e.target.value })}
-              className="w-full min-h-[46px] px-3 py-2 border rounded-xl dark:bg-slate-900"
-            />
-
-            <div className="grid grid-cols-2 gap-3">
-              <select
-                value={form.currencyPaid}
-                onChange={(e) =>
-                  setForm({ ...form, currencyPaid: e.target.value as 'USD' | 'SLSH' })
-                }
-                className="min-h-[46px] px-3 py-2 border rounded-xl dark:bg-slate-900"
-              >
-                <option value="USD">USD ($)</option>
-                <option value="SLSH">SLSH</option>
-              </select>
-              <NumericInput
-                step="0.01"
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                {t('expenses.payee')}
+              </label>
+              <input
                 required
-                placeholder={t('expenses.amount')}
-                value={form.amountOriginal}
-                onChange={(val) => setForm({ ...form, amountOriginal: val })}
-                className="min-h-[46px] px-3 py-2 border rounded-xl font-bold dark:bg-slate-900"
+                placeholder={t('expenses.payee')}
+                value={form.payee}
+                onChange={(e) => setForm({ ...form, payee: e.target.value })}
+                className="w-full min-h-[44px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
               />
             </div>
 
-            {/* Offline Receipt Photo Capture */}
-            <label className="flex items-center justify-center gap-2 min-h-[46px] border-2 border-dashed rounded-xl cursor-pointer text-sm font-medium text-slate-600 dark:text-slate-300">
-              <Camera className="w-5 h-5 text-emerald-600" />
-              {t('expenses.receipt_photo')}
+            {/* Expense Description Field with Placeholder */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                {t('expenses.description', 'Description / Faahfaahinta Kharashka')}
+              </label>
+              <textarea
+                rows={2}
+                placeholder={t(
+                  'expenses.description_placeholder',
+                  'Write description of the expense (e.g., Monthly electricity bill, transport, office supplies...)'
+                )}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 resize-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  Currency
+                </label>
+                <select
+                  value={form.currencyPaid}
+                  onChange={(e) =>
+                    setForm({ ...form, currencyPaid: e.target.value as 'USD' | 'SLSH' })
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="SLSH">SLSH</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  {t('expenses.amount')}
+                </label>
+                <NumericInput
+                  step="0.01"
+                  required
+                  placeholder={t('expenses.amount')}
+                  value={form.amountOriginal}
+                  onChange={(val) => setForm({ ...form, amountOriginal: val })}
+                  className="w-full min-h-[44px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl font-bold bg-slate-50 dark:bg-slate-900"
+                />
+              </div>
+            </div>
+
+            {/* Receipt Photo Capture */}
+            <label className="flex items-center justify-center gap-2 min-h-[44px] border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl cursor-pointer text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-300 hover:border-emerald-500 transition">
+              <Camera className="w-4 h-4 text-emerald-600" />
+              <span>{t('expenses.receipt_photo')}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -298,14 +341,14 @@ export const ExpensesPage: React.FC = () => {
             </label>
 
             {/* Recurring Expense Toggle */}
-            <label className="flex items-center gap-2 text-sm font-medium">
+            <label className="flex items-center gap-2 text-xs sm:text-sm font-medium cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.isRecurring}
                 onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })}
-                className="w-5 h-5"
+                className="w-4 h-4 rounded accent-emerald-600"
               />
-              {t('expenses.recurring')}
+              <span>{t('expenses.recurring')}</span>
             </label>
 
             {form.isRecurring && (
@@ -317,7 +360,7 @@ export const ExpensesPage: React.FC = () => {
                     recurringFrequency: e.target.value as 'DAILY' | 'WEEKLY' | 'MONTHLY',
                   })
                 }
-                className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
               >
                 <option value="DAILY">DAILY</option>
                 <option value="WEEKLY">WEEKLY</option>
@@ -325,17 +368,17 @@ export const ExpensesPage: React.FC = () => {
               </select>
             )}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="min-h-[44px] px-4 py-2 border rounded-xl"
+                className="min-h-[42px] px-4 py-2 text-xs sm:text-sm font-semibold border border-slate-300 dark:border-slate-700 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="min-h-[44px] px-5 py-2 bg-emerald-600 text-white font-semibold rounded-xl"
+                className="min-h-[42px] px-5 py-2 text-xs sm:text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-sm"
               >
                 Save Expense
               </button>

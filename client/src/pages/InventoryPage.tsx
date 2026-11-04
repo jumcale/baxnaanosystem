@@ -385,22 +385,22 @@ export const InventoryPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6">
       {/* Notification Toast */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-lg font-medium">
+        <div className="fixed bottom-20 md:bottom-5 right-4 z-50 bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-lg text-xs sm:text-sm font-medium">
           {toastMessage}
         </div>
       )}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Package className="w-7 h-7 text-emerald-600" />
-            {t('inventory.title')}
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2">
+            <Package className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
+            <span className="truncate">{t('inventory.title')}</span>
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
             {activeBranchId === 'ALL'
               ? t('branch.all_branches')
               : `${currentBranchMeta.code} - ${currentBranchMeta.name} (${currentBranchMeta.location})`}
@@ -410,16 +410,16 @@ export const InventoryPage: React.FC = () => {
         {canPerform('inventory:write') && (
           <button
             onClick={() => setShowAddProductModal(true)}
-            className="min-h-[48px] px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl flex items-center justify-center gap-2 shadow-sm transition"
+            className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition"
           >
-            <Plus className="w-5 h-5" />
-            {t('inventory.actions.add_product')}
+            <Plus className="w-4 h-4" />
+            <span>{t('inventory.actions.add_product')}</span>
           </button>
         )}
       </div>
 
-      {/* Navigation Tabs (Large Mobile-First Touch Targets) */}
-      <div className="flex overflow-x-auto gap-2 pb-3 mb-6 border-b border-slate-200 dark:border-slate-800">
+      {/* Navigation Tabs (Compact Horizontal Scroll on Mobile) */}
+      <div className="flex overflow-x-auto no-scrollbar gap-1.5 pb-2.5 mb-4 border-b border-slate-200 dark:border-slate-800">
         {(
           [
             { id: 'products', icon: Package, label: t('inventory.tabs.products') },
@@ -438,14 +438,14 @@ export const InventoryPage: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`min-h-[48px] px-4 py-2.5 rounded-xl font-medium flex items-center gap-2 whitespace-nowrap transition ${
+              className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition ${
                 isActive
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-100'
               }`}
             >
-              <Icon className="w-4 h-4" />
-              {tab.label}
+              <Icon className="w-3.5 h-3.5" />
+              <span>{tab.label}</span>
             </button>
           );
         })}
@@ -454,57 +454,59 @@ export const InventoryPage: React.FC = () => {
       {/* TAB 1: PRODUCTS & FEFO BATCHES */}
       {activeTab === 'products' && (
         <div>
-          <div className="relative mb-4">
-            <Search className="w-5 h-5 absolute left-4 top-3.5 text-slate-400" />
+          <div className="relative mb-3.5">
+            <Search className="w-4 h-4 sm:w-5 sm:h-5 absolute left-3.5 top-3 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={`${t('inventory.fields.name')}, ${t('inventory.fields.sku')}, ${t('inventory.fields.barcode')}...`}
-              className="w-full min-h-[48px] pl-12 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+              className="w-full min-h-[42px] pl-10 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-4">
+          <div className="grid grid-cols-1 gap-2.5 sm:gap-3.5">
             {filteredProducts.map((p) => (
               <div
                 key={p.id}
-                className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-sm border border-slate-200 dark:border-slate-700"
+                className="bg-white dark:bg-slate-800 rounded-xl sm:rounded-2xl p-3.5 sm:p-4 shadow-sm border border-slate-200/90 dark:border-slate-700/80"
               >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2.5 py-1 rounded-md">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-mono bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-md">
                         {String(p.sku)}
                       </span>
-                      <h3 className="text-lg font-bold">{String(p.name)}</h3>
+                      <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                        {String(p.name)}
+                      </h3>
 
                       {/* Pharmacy Badges */}
                       {Boolean(p.isPrescriptionOnly) && (
-                        <span className="text-xs bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-2.5 py-1 rounded-full font-semibold flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5" />
+                        <span className="text-[11px] bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                          <FileText className="w-3 h-3" />
                           {t('inventory.badges.rx_only')}
                         </span>
                       )}
 
                       {/* Veterinary Cold Chain Badge */}
                       {Boolean(p.isColdChainRequired) && (
-                        <span className="text-xs bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300 px-2.5 py-1 rounded-full font-semibold flex items-center gap-1">
-                          <Snowflake className="w-3.5 h-3.5" />
+                        <span className="text-[11px] bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                          <Snowflake className="w-3 h-3" />
                           {t('inventory.badges.cold_chain')}
                         </span>
                       )}
 
                       {/* Low Stock Alert */}
                       {p.isLowStock && (
-                        <span className="text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2.5 py-1 rounded-full font-semibold">
+                        <span className="text-[11px] bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded-full font-semibold">
                           {t('inventory.badges.low_stock')}
                         </span>
                       )}
                     </div>
 
                     {/* Clinical Sub-Metadata (Pharmacy vs Vet) */}
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap gap-4">
+                    <div className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap gap-3">
                       {p.genericName && (
                         <span>
                           {t('inventory.fields.generic_name')}:{' '}
@@ -536,26 +538,26 @@ export const InventoryPage: React.FC = () => {
                   </div>
 
                   {/* Stock & Price Summary */}
-                  <div className="flex items-center gap-6">
-                    <div className="text-right">
-                      <div className="text-xs text-slate-500">{t('inventory.fields.sell_price')}</div>
-                      <div className="text-lg font-bold text-emerald-600">
+                  <div className="flex items-center justify-between md:justify-end gap-4 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-700/60 tabular-nums">
+                    <div>
+                      <div className="text-[10px] text-slate-400">{t('inventory.fields.sell_price')}</div>
+                      <div className="text-sm sm:text-base font-bold text-emerald-600">
                         ${Number(p.sellPriceUsd).toFixed(2)}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs text-slate-500">
+                      <div className="text-[10px] text-slate-400">
                         {t('inventory.fields.sellable_stock')}
                       </div>
-                      <div className="text-xl font-extrabold">{p.sellableStock}</div>
+                      <div className="text-base sm:text-lg font-bold">{p.sellableStock}</div>
                     </div>
                     {p.expiredStock > 0 && (
                       <div className="text-right text-red-600">
-                        <div className="text-xs font-semibold flex items-center gap-1">
-                          <ShieldAlert className="w-3.5 h-3.5" />
+                        <div className="text-[10px] font-semibold flex items-center gap-1">
+                          <ShieldAlert className="w-3 h-3" />
                           {t('inventory.fields.expired_stock')}
                         </div>
-                        <div className="text-lg font-bold">{p.expiredStock}</div>
+                        <div className="text-sm sm:text-base font-bold">{p.expiredStock}</div>
                       </div>
                     )}
                   </div>

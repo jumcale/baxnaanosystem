@@ -120,7 +120,6 @@ export const QuotationsPage: React.FC = () => {
       return;
     }
 
-    // Auto-include a product that was selected but not yet added with "+"
     let items = form.items;
     const pendingLine = buildLineItemFromSelection();
     if (pendingLine && !items.some((i) => i.productId === pendingLine.productId)) {
@@ -148,7 +147,9 @@ export const QuotationsPage: React.FC = () => {
         currency: 'USD',
         exchangeRateUsed: form.exchangeRateUsed,
         discountUsd: form.discountUsd,
-        validUntil: form.validUntil ? new Date(form.validUntil).toISOString() : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        validUntil: form.validUntil
+          ? new Date(form.validUntil).toISOString()
+          : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         items: items.map((i) => ({
           productId: i.productId,
           quantity: i.quantity,
@@ -198,96 +199,107 @@ export const QuotationsPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-4 md:p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <FileSpreadsheet className="w-7 h-7 text-emerald-600" />
-          {t('quotations.title')}
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-lg sm:text-xl font-bold tracking-tight flex items-center gap-2 min-w-0">
+          <FileSpreadsheet className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
+          <span className="truncate">{t('quotations.title')}</span>
         </h1>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="min-h-[48px] px-5 py-2.5 bg-emerald-600 text-white font-semibold rounded-xl flex items-center gap-2"
+          className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shrink-0 transition"
         >
-          <Plus className="w-5 h-5" />
-          {t('quotations.create_quote')}
+          <Plus className="w-4 h-4" />
+          <span>{t('quotations.create_quote')}</span>
         </button>
       </div>
 
       {errorMsg && (
-        <div className="p-3 bg-red-50 border border-red-300 text-red-700 rounded-xl text-sm font-medium">
+        <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-xs sm:text-sm font-medium">
           {errorMsg}
         </div>
       )}
 
-      <div className="space-y-3">
-        {quotations.map((q) => {
-          const isExpired =
-            q.status !== 'CONVERTED' && new Date(String(q.validUntil)) < new Date();
-          const status = isExpired ? 'EXPIRED' : String(q.status || 'SENT');
+      <div className="space-y-2.5 sm:space-y-3">
+        {quotations.length === 0 ? (
+          <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center text-xs sm:text-sm text-slate-400">
+            No price quotations created yet.
+          </div>
+        ) : (
+          quotations.map((q) => {
+            const isExpired =
+              q.status !== 'CONVERTED' && new Date(String(q.validUntil)) < new Date();
+            const status = isExpired ? 'EXPIRED' : String(q.status || 'SENT');
 
-          return (
-            <div
-              key={String(q.id)}
-              className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row md:items-center justify-between gap-4"
-            >
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2.5 py-1 rounded">
-                    {String(q.quotationNumber)}
-                  </span>
-                  <h3 className="font-bold text-base">{String(q.customerName || 'Walk-in')}</h3>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
-                    {t(`quotations.status_${status}`)}
-                  </span>
+            return (
+              <div
+                key={String(q.id)}
+                className="bg-white dark:bg-slate-800 p-3.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200/90 dark:border-slate-700/80 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono text-[11px] font-semibold bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-md">
+                      {String(q.quotationNumber)}
+                    </span>
+                    <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white">
+                      {String(q.customerName || 'Walk-in')}
+                    </h3>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
+                      {t(`quotations.status_${status}`)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                    {t('quotations.valid_until')}: {String(q.validUntil).slice(0, 10)} •{' '}
+                    <strong className="text-emerald-600 dark:text-emerald-400">
+                      ${Number(q.totalUsd).toFixed(2)}
+                    </strong>{' '}
+                    ({Number(q.totalSlsh).toLocaleString()} SLSH)
+                  </div>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">
-                  {t('quotations.valid_until')}: {String(q.validUntil).slice(0, 10)} | Total: $
-                  {Number(q.totalUsd).toFixed(2)} ({Number(q.totalSlsh).toLocaleString()} SLSH)
-                </div>
-              </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => handleShareWhatsApp(q)}
-                  className="min-h-[42px] px-3 py-2 bg-green-600 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5"
-                >
-                  <Share2 className="w-4 h-4" />
-                  {t('quotations.share_whatsapp')}
-                </button>
-                <button
-                  onClick={() => printQuotationPdf(q)}
-                  className="min-h-[42px] px-3 py-2 border text-xs font-semibold rounded-xl flex items-center gap-1.5"
-                >
-                  <Printer className="w-4 h-4" />
-                  {t('quotations.print_pdf')}
-                </button>
-                {status === 'SENT' && (
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
                   <button
-                    onClick={() => handleConvert(String(q.id))}
-                    className="min-h-[42px] px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl flex items-center gap-1.5"
+                    onClick={() => handleShareWhatsApp(q)}
+                    className="min-h-[38px] px-2.5 sm:px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5"
                   >
-                    <ShoppingBag className="w-4 h-4" />
-                    {t('quotations.convert_to_sale')}
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>{t('quotations.share_whatsapp')}</span>
                   </button>
-                )}
+                  <button
+                    onClick={() => printQuotationPdf(q)}
+                    className="min-h-[38px] px-2.5 sm:px-3 py-1.5 border border-slate-200 dark:border-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-700/50"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>{t('quotations.print_pdf')}</span>
+                  </button>
+                  {status === 'SENT' && (
+                    <button
+                      onClick={() => handleConvert(String(q.id))}
+                      className="min-h-[38px] px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5"
+                    >
+                      <ShoppingBag className="w-3.5 h-3.5" />
+                      <span>{t('quotations.convert_to_sale')}</span>
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
-      {/* Create Quotation Modal — mobile-friendly, scrollable body with sticky action footer */}
+      {/* Create Quotation Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center sm:p-4">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4">
           <form
             onSubmit={handleSaveQuotation}
-            className="bg-white dark:bg-slate-800 rounded-t-2xl sm:rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden"
+            className="bg-white dark:bg-slate-800 rounded-t-2xl sm:rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl"
           >
             <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
-              <h2 className="text-lg font-bold">{t('quotations.create_quote')}</h2>
+              <h2 className="text-base sm:text-lg font-bold">{t('quotations.create_quote')}</h2>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3.5">
               {formError && (
                 <div className="p-3 bg-red-50 border border-red-300 text-red-700 rounded-xl text-xs font-semibold">
                   {formError}
@@ -299,14 +311,14 @@ export const QuotationsPage: React.FC = () => {
                   placeholder="Customer Name"
                   value={form.customerName}
                   onChange={(e) => setForm({ ...form, customerName: e.target.value })}
-                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                  className="w-full min-w-0 min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
                 />
                 <input
                   type="tel"
                   placeholder="WhatsApp Phone (+252...)"
                   value={form.customerPhone}
                   onChange={(e) => setForm({ ...form, customerPhone: e.target.value })}
-                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                  className="w-full min-w-0 min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
                 />
               </div>
 
@@ -318,17 +330,16 @@ export const QuotationsPage: React.FC = () => {
                   type="date"
                   value={form.validUntil}
                   onChange={(e) => setForm({ ...form, validUntil: e.target.value })}
-                  className="w-full min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900"
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
                 />
               </div>
 
-              {/* Product picker: select on its own row, qty + add on the next row (no overflow on phones) */}
               <div className="space-y-2">
                 <label className="block text-xs font-semibold">Add Product</label>
                 <select
                   value={form.selectedProductId}
                   onChange={(e) => setForm({ ...form, selectedProductId: e.target.value })}
-                  className="w-full min-w-0 min-h-[44px] px-3 py-2 border rounded-xl dark:bg-slate-900 text-sm"
+                  className="w-full min-w-0 min-h-[42px] px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 text-sm"
                 >
                   <option value="">-- Select Product --</option>
                   {products.map((p) => (
@@ -343,12 +354,12 @@ export const QuotationsPage: React.FC = () => {
                     min={1}
                     value={form.selectedQty}
                     onChange={(val) => setForm({ ...form, selectedQty: Math.max(1, val) })}
-                    className="flex-1 min-w-0 min-h-[44px] px-2 border rounded-xl text-center dark:bg-slate-900"
+                    className="flex-1 min-w-0 min-h-[42px] px-2 border border-slate-300 dark:border-slate-700 rounded-xl text-center bg-slate-50 dark:bg-slate-900 text-sm"
                   />
                   <button
                     type="button"
                     onClick={handleAddLineItem}
-                    className="min-h-[44px] px-5 bg-emerald-600 text-white rounded-xl font-bold shrink-0"
+                    className="min-h-[42px] px-4 bg-emerald-600 text-white rounded-xl text-xs sm:text-sm font-bold shrink-0"
                   >
                     + Add
                   </button>
@@ -362,18 +373,18 @@ export const QuotationsPage: React.FC = () => {
                   form.items.map((item, idx) => (
                     <div
                       key={`${item.productId}-${idx}`}
-                      className="flex items-center justify-between gap-2 p-2 bg-slate-100 dark:bg-slate-900 rounded"
+                      className="flex items-center justify-between gap-2 p-2.5 bg-slate-100 dark:bg-slate-900 rounded-lg"
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {item.productName} x {item.quantity}
+                      <span className="min-w-0 flex-1 truncate font-medium">
+                        {item.productName} × {item.quantity}
                       </span>
-                      <span className="font-bold shrink-0">
+                      <span className="font-bold shrink-0 tabular-nums">
                         ${(item.quantity * item.unitPriceUsd).toFixed(2)}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleRemoveLineItem(idx)}
-                        className="w-8 h-8 shrink-0 rounded-lg text-red-600 hover:bg-red-50 font-bold"
+                        className="w-7 h-7 shrink-0 rounded-lg text-red-600 hover:bg-red-50 font-bold"
                         aria-label="Remove item"
                       >
                         ✕
@@ -391,14 +402,14 @@ export const QuotationsPage: React.FC = () => {
                   setFormError(null);
                   setShowCreateModal(false);
                 }}
-                className="min-h-[44px] px-4 py-2 border rounded-xl"
+                className="min-h-[40px] px-4 py-2 text-xs sm:text-sm font-semibold border border-slate-300 dark:border-slate-700 rounded-xl"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isSaving}
-                className="min-h-[44px] px-5 py-2 bg-emerald-600 disabled:bg-slate-400 text-white font-semibold rounded-xl"
+                className="min-h-[40px] px-5 py-2 text-xs sm:text-sm bg-emerald-600 disabled:bg-slate-400 text-white font-semibold rounded-xl"
               >
                 {isSaving ? 'Saving...' : 'Save Quotation'}
               </button>
