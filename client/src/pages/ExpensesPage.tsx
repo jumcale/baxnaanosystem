@@ -8,6 +8,7 @@ import {
   XCircle,
   Repeat,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +21,8 @@ export const ExpensesPage: React.FC = () => {
 
   const [expenses, setExpenses] = useState<Array<any>>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [form, setForm] = useState({
     branchId: activeBranchId === 'ALL' ? BAXNAANO_BRANCHES.B1.id : activeBranchId,
@@ -123,6 +126,20 @@ export const ExpensesPage: React.FC = () => {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget || user?.role !== 'ADMIN') return;
+    setIsDeleting(true);
+    try {
+      await expensesApi.deleteExpense(String(deleteTarget.id));
+      setDeleteTarget(null);
+      await loadExpenses();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete expense.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 p-3 sm:p-6 space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -192,7 +209,7 @@ export const ExpensesPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
+                <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 sm:gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-700/60">
                   {Boolean(exp.receiptPhotoData) && (
                     <img
                       src={String(exp.receiptPhotoData)}
@@ -212,31 +229,109 @@ export const ExpensesPage: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Branch Manager / Admin Approval Actions */}
-                  {status === 'PENDING' && canPerform('expenses:approve') && (
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    {/* Branch Manager / Admin Approval Actions */}
+                    {status === 'PENDING' && canPerform('expenses:approve') && (
+                      <>
+                        <button
+                          onClick={() => handleApproval(String(exp.id), 'APPROVED')}
+                          className="min-h-[36px] px-2.5 sm:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>{t('expenses.approve')}</span>
+                        </button>
+                        <button
+                          onClick={() => handleApproval(String(exp.id), 'REJECTED')}
+                          className="min-h-[36px] px-2.5 sm:px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          <span>{t('expenses.reject')}</span>
+                        </button>
+                      </>
+                    )}
+
+                    {/* Admin-Only Delete Expense Button */}
+                    {user?.role === 'ADMIN' && (
                       <button
-                        onClick={() => handleApproval(String(exp.id), 'APPROVED')}
-                        className="min-h-[38px] px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                        type="button"
+                        onClick={() => setDeleteTarget(exp)}
+                        title="Delete / Remove Incorrect Expense (Admin Only)"
+                        className="min-h-[36px] px-2.5 py-1.5 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/70 text-xs font-semibold rounded-lg flex items-center gap-1 transition"
                       >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        <span>{t('expenses.approve')}</span>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{t('expenses.delete', 'Delete')}</span>
                       </button>
-                      <button
-                        onClick={() => handleApproval(String(exp.id), 'REJECTED')}
-                        className="min-h-[38px] px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>{t('expenses.reject')}</span>
-                      </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             );
           })
         )}
       </div>
+
+      {/* Admin Delete Confirmation Modal */}
+      {deleteTarget && user?.role === 'ADMIN' && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 p-5 sm:p-6 rounded-2xl max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-700">
+            <div className="flex items-center gap-2.5 text-red-600 dark:text-red-400">
+              <div className="w-9 h-9 rounded-xl bg-red-50 dark:bg-red-950/60 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h2 className="text-base sm:text-lg font-bold">
+                Delete Expense / Tirtir Kharashka
+              </h2>
+            </div>
+
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Are you sure you want to permanently remove this expense record?
+            </p>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Payee / Category:</span>
+                <strong className="text-slate-900 dark:text-white">
+                  {String(deleteTarget.payee)} ({String(deleteTarget.category)})
+                </strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Amount:</span>
+                <strong className="text-red-600 tabular-nums">
+                  ${Number(deleteTarget.amountUsd || 0).toFixed(2)}
+                </strong>
+              </div>
+              {Boolean(deleteTarget.description) && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500 shrink-0">Description:</span>
+                  <span className="text-slate-700 dark:text-slate-300 truncate">
+                    {String(deleteTarget.description)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteTarget(null)}
+                className="min-h-[40px] px-4 py-2 text-xs sm:text-sm font-semibold border border-slate-300 dark:border-slate-700 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="min-h-[40px] px-4 py-2 text-xs sm:text-sm bg-red-600 hover:bg-red-700 disabled:bg-slate-400 text-white font-semibold rounded-xl shadow-sm flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeleting ? 'Deleting...' : 'Confirm Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Expense Modal */}
       {showAddModal && (

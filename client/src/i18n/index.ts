@@ -203,6 +203,7 @@ export const resources = {
         status_REJECTED: 'Waa La Diiday',
         approve: 'Ogolaaw (Approve)',
         reject: 'Diid (Reject)',
+        delete: 'Tirtir (Delete)',
       },
       quotations: {
         title: 'Qiimeyn (Quotations)',
@@ -538,6 +539,7 @@ export const resources = {
         status_REJECTED: 'Rejected',
         approve: 'Approve',
         reject: 'Reject',
+        delete: 'Delete',
       },
       quotations: {
         title: 'Price Quotations',

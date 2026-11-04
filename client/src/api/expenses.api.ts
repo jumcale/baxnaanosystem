@@ -78,4 +78,13 @@ export const expensesApi = {
     );
     return ExpenseRecordSchema.parse(res.expense);
   },
+
+  /**
+   * Delete / remove an expense (Admin only)
+   */
+  async deleteExpense(expenseId: string): Promise<{ deleted: boolean; id: string }> {
+    return apiRequest<{ deleted: boolean; id: string }>(`/expenses/${expenseId}`, {
+      method: 'DELETE',
+    });
+  },
 };

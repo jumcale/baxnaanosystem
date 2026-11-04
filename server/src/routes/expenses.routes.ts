@@ -204,3 +204,55 @@ expensesRouter.post(
     }
   }
 );
+
+/**
+ * DELETE /api/expenses/:id
+ * Admin-only endpoint to delete/remove an incorrectly recorded expense.
+ */
+expensesRouter.delete(
+  '/:id',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (!req.user || req.user.role !== 'ADMIN') {
+        res.status(403).json({
+          error: 'FORBIDDEN',
+          message: 'Only Admin can delete or remove recorded expenses.',
+        });
+        return;
+      }
+
+      const existing = await prisma.expense.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!existing) {
+        res.status(404).json({ error: 'EXPENSE_NOT_FOUND' });
+        return;
+      }
+
+      await prisma.expense.delete({
+        where: { id: existing.id },
+      });
+
+      await recordAuditLog({
+        branchId: existing.branchId,
+        userId: req.user.id,
+        action: 'EXPENSE_DELETED',
+        entityType: 'Expense',
+        entityId: existing.id,
+        oldData: {
+          category: existing.category,
+          payee: existing.payee,
+          amountUsd: Number(existing.amountUsd),
+          description: existing.description,
+        },
+        ipAddress: req.ip,
+      });
+
+      res.json({ deleted: true, id: existing.id });
+    } catch (error) {
+      console.error('[Expenses] Delete error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
