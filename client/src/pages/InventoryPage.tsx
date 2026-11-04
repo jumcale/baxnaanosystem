@@ -12,6 +12,7 @@ import {
   Truck,
   Search,
   ShieldAlert,
+  Edit3,
 } from 'lucide-react';
 import {
   BAXNAANO_BRANCHES,
@@ -40,7 +41,34 @@ export const InventoryPage: React.FC = () => {
   const [transfers, setTransfers] = useState<any[]>([]);
   const [movements, setMovements] = useState<any[]>([]);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<ServerProductWithFEFO | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const [editForm, setEditForm] = useState({
+    sku: '',
+    barcode: '',
+    name: '',
+    buyPriceUsd: 0,
+    sellPriceUsd: 0,
+    reorderLevel: 15,
+    genericName: '',
+    dosageForm: '',
+    strength: '',
+    isPrescriptionOnly: false,
+    targetSpecies: [] as SpeciesType[],
+    dosePerKg: '',
+    withdrawalPeriodDays: 0,
+    isColdChainRequired: false,
+    initialStockQuantity: 0,
+    reason: '',
+    batches: [] as Array<{
+      id: string;
+      batchNumber: string;
+      expiryDate: string;
+      quantity: number;
+    }>,
+  });
 
   // Determine active branch metadata (Pharmacy B1 vs Veterinary B2/B3)
   const currentBranchMeta = useMemo(() => {
@@ -60,7 +88,7 @@ export const InventoryPage: React.FC = () => {
       const [list, trfs, movs] = await Promise.all([
         inventoryApi.getProducts(activeBranchId),
         inventoryApi.getTransfers(),
-        inventoryApi.getMovements(),
+        inventoryApi.getMovements({ branchId: activeBranchId }),
       ]);
       setProducts(list);
       setTransfers(trfs);
@@ -377,6 +405,79 @@ export const InventoryPage: React.FC = () => {
     }));
   };
 
+  const toggleEditTargetSpecies = (sp: SpeciesType) => {
+    setEditForm((prev) => ({
+      ...prev,
+      targetSpecies: prev.targetSpecies.includes(sp)
+        ? prev.targetSpecies.filter((item) => item !== sp)
+        : [...prev.targetSpecies, sp],
+    }));
+  };
+
+  const openEditProductModal = (prod: ServerProductWithFEFO) => {
+    setEditingProduct(prod);
+    setEditForm({
+      sku: String(prod.sku || ''),
+      barcode: String(prod.barcode || ''),
+      name: String(prod.name || ''),
+      buyPriceUsd: Number(prod.buyPriceUsd || 0),
+      sellPriceUsd: Number(prod.sellPriceUsd || 0),
+      reorderLevel: Number(prod.reorderLevel || 15),
+      genericName: String(prod.genericName || ''),
+      dosageForm: String(prod.dosageForm || ''),
+      strength: String(prod.strength || ''),
+      isPrescriptionOnly: Boolean(prod.isPrescriptionOnly),
+      targetSpecies: Array.isArray(prod.targetSpecies) ? (prod.targetSpecies as SpeciesType[]) : [],
+      dosePerKg: String(prod.dosePerKg || ''),
+      withdrawalPeriodDays: Number(prod.withdrawalPeriodDays || 0),
+      isColdChainRequired: Boolean(prod.isColdChainRequired),
+      initialStockQuantity: 0,
+      reason: '',
+      batches: (prod.batches || []).map((b) => ({
+        id: b.id,
+        batchNumber: String(b.batchNumber || ''),
+        expiryDate: String(b.expiryDate || '').slice(0, 10),
+        quantity: Number(b.cachedQuantity || 0),
+      })),
+    });
+  };
+
+  const handleSaveEditProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct || user?.role !== 'ADMIN') return;
+    setIsSavingEdit(true);
+    try {
+      await inventoryApi.updateProduct(editingProduct.id, {
+        sku: editForm.sku.trim(),
+        barcode: editForm.barcode.trim() || undefined,
+        name: editForm.name.trim(),
+        buyPriceUsd: Number(editForm.buyPriceUsd),
+        sellPriceUsd: Number(editForm.sellPriceUsd),
+        reorderLevel: Number(editForm.reorderLevel),
+        genericName: editForm.genericName.trim() || undefined,
+        dosageForm: editForm.dosageForm.trim() || undefined,
+        strength: editForm.strength.trim() || undefined,
+        isPrescriptionOnly: editForm.isPrescriptionOnly,
+        targetSpecies: editForm.targetSpecies,
+        dosePerKg: editForm.dosePerKg.trim() || undefined,
+        withdrawalPeriodDays: Number(editForm.withdrawalPeriodDays) || undefined,
+        isColdChainRequired: editForm.isColdChainRequired,
+        initialStockQuantity: Number(editForm.initialStockQuantity || 0),
+        reason: editForm.reason.trim() || undefined,
+        batches: editForm.batches,
+      });
+
+      const editedName = editForm.name;
+      setEditingProduct(null);
+      await loadLocalInventory();
+      triggerToast(`Updated "${editedName}" and recorded entry in Movement Ledger.`);
+    } catch (err: any) {
+      triggerToast(err?.message || 'Failed to update product.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const formatBranchCode = (bId: string) => {
     const found = Object.values(BAXNAANO_BRANCHES).find(
       (b) => b.id === bId || b.code === bId
@@ -418,8 +519,8 @@ export const InventoryPage: React.FC = () => {
         )}
       </div>
 
-      {/* Navigation Tabs (Compact Horizontal Scroll on Mobile) */}
-      <div className="flex overflow-x-auto no-scrollbar gap-1.5 pb-2.5 mb-4 border-b border-slate-200 dark:border-slate-800">
+      {/* Navigation Tabs (Wraps cleanly on desktop so no tab is ever hidden or clipped) */}
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 pb-3 mb-4 border-b border-slate-200 dark:border-slate-800">
         {(
           [
             { id: 'products', icon: Package, label: t('inventory.tabs.products') },
@@ -441,10 +542,10 @@ export const InventoryPage: React.FC = () => {
               className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition ${
                 isActive
                   ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-100'
+                  : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700/60'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className="w-3.5 h-3.5 shrink-0" />
               <span>{tab.label}</span>
             </button>
           );
@@ -559,6 +660,16 @@ export const InventoryPage: React.FC = () => {
                         </div>
                         <div className="text-sm sm:text-base font-bold">{p.expiredStock}</div>
                       </div>
+                    )}
+                    {user?.role === 'ADMIN' && (
+                      <button
+                        type="button"
+                        onClick={() => openEditProductModal(p)}
+                        className="min-h-[36px] px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold flex items-center gap-1.5 transition"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Edit Product</span>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1034,15 +1145,40 @@ export const InventoryPage: React.FC = () => {
 
       {/* TAB 6: IMMUTABLE STOCK MOVEMENT LEDGER */}
       {activeTab === 'ledger' && (
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <History className="w-5 h-5 text-emerald-600" />
-            {t('inventory.tabs.ledger')}
-          </h2>
+        <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+              <History className="w-5 h-5 text-emerald-600" />
+              <span>{t('inventory.tabs.ledger')}</span>
+            </h2>
+
+            {user?.role === 'ADMIN' && products.length > 0 && (
+              <div className="flex items-center gap-2">
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    const found = products.find((p) => p.id === e.target.value);
+                    if (found) {
+                      openEditProductModal(found);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="min-h-[38px] px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-950/40 text-xs font-semibold text-emerald-800 dark:text-emerald-200"
+                >
+                  <option value="">✎ Edit Existing Product (Admin)...</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {String(p.name)} ({String(p.sku)}) — Stock: {p.sellableStock}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
-              <thead className="bg-slate-100 dark:bg-slate-700">
+              <thead className="bg-slate-100 dark:bg-slate-700/80 text-slate-700 dark:text-slate-200">
                 <tr>
                   <th className="p-3">Date / Time</th>
                   <th className="p-3">Product</th>
@@ -1050,36 +1186,294 @@ export const InventoryPage: React.FC = () => {
                   <th className="p-3">Movement Type</th>
                   <th className="p-3">Reason / Reference</th>
                   <th className="p-3 text-right">Quantity Delta</th>
+                  {user?.role === 'ADMIN' && <th className="p-3 text-right">Action</th>}
                 </tr>
               </thead>
               <tbody>
-                {movements.map((m) => (
-                  <tr key={m.id} className="border-b dark:border-slate-700">
-                    <td className="p-3 whitespace-nowrap">
-                      {new Date(m.createdAt).toLocaleString()}
-                    </td>
-                    <td className="p-3 font-semibold">
-                      {m.productName} <span className="text-slate-400 font-mono">({m.sku})</span>
-                    </td>
-                    <td className="p-3 font-mono">#{m.batchNumber}</td>
-                    <td className="p-3">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 font-mono font-bold">
-                        {m.type}
-                      </span>
-                    </td>
-                    <td className="p-3 text-slate-500">{m.reason}</td>
-                    <td
-                      className={`p-3 text-right font-extrabold text-sm ${
-                        m.quantityDelta >= 0 ? 'text-emerald-600' : 'text-red-600'
-                      }`}
-                    >
-                      {m.quantityDelta > 0 ? `+${m.quantityDelta}` : m.quantityDelta}
-                    </td>
-                  </tr>
-                ))}
+                {movements.map((m) => {
+                  const prodName = m.productName || m.product?.name || 'Product';
+                  const prodSku = m.sku || m.product?.sku || '';
+                  const batchNo = m.batchNumber || m.batch?.batchNumber || 'N/A';
+                  const matchedProd = products.find(
+                    (p) => p.id === m.productId || p.id === m.product?.id
+                  );
+
+                  return (
+                    <tr key={m.id} className="border-b border-slate-100 dark:border-slate-700/70 hover:bg-slate-50/60 dark:hover:bg-slate-700/30">
+                      <td className="p-3 whitespace-nowrap tabular-nums text-slate-500 dark:text-slate-400">
+                        {new Date(m.createdAt).toLocaleString()}
+                      </td>
+                      <td className="p-3 font-semibold text-slate-900 dark:text-white">
+                        {prodName}{' '}
+                        {prodSku && (
+                          <span className="text-slate-400 font-mono text-[11px]">({prodSku})</span>
+                        )}
+                      </td>
+                      <td className="p-3 font-mono text-slate-600 dark:text-slate-300">
+                        #{batchNo}
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 font-mono font-bold text-[11px]">
+                          {m.type}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-500 dark:text-slate-400">{m.reason}</td>
+                      <td
+                        className={`p-3 text-right font-bold text-sm tabular-nums ${
+                          m.quantityDelta >= 0 ? 'text-emerald-600' : 'text-red-600'
+                        }`}
+                      >
+                        {m.quantityDelta > 0 ? `+${m.quantityDelta}` : m.quantityDelta}
+                      </td>
+                      {user?.role === 'ADMIN' && (
+                        <td className="p-3 text-right">
+                          {matchedProd && (
+                            <button
+                              type="button"
+                              onClick={() => openEditProductModal(matchedProd)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-emerald-600 hover:text-white dark:bg-slate-700 dark:hover:bg-emerald-600 text-slate-700 dark:text-slate-200 font-semibold text-[11px] inline-flex items-center gap-1 transition"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              <span>Edit</span>
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ADMIN EDIT PRODUCT & STOCK LEDGER MODAL */}
+      {editingProduct && user?.role === 'ADMIN' && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={handleSaveEditProduct}
+            className="bg-white dark:bg-slate-800 rounded-2xl p-5 sm:p-6 max-w-2xl w-full space-y-4 max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-slate-700"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+              <div>
+                <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-emerald-600" />
+                  <span>Edit Product & Record Movement Ledger</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Changes to product details, prices, or batch stock quantities are automatically recorded in the Movement Ledger.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-semibold mb-1">{t('inventory.fields.sku')}</label>
+                <input
+                  required
+                  value={editForm.sku}
+                  onChange={(e) => setEditForm({ ...editForm, sku: e.target.value })}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  {t('inventory.fields.barcode')}
+                </label>
+                <input
+                  value={editForm.barcode}
+                  onChange={(e) => setEditForm({ ...editForm, barcode: e.target.value })}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold mb-1">
+                  {t('inventory.fields.name')}
+                </label>
+                <input
+                  required
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 font-semibold"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  {t('inventory.fields.buy_price')} (USD)
+                </label>
+                <NumericInput
+                  step="0.01"
+                  required
+                  value={editForm.buyPriceUsd}
+                  onChange={(val) => setEditForm({ ...editForm, buyPriceUsd: val })}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">
+                  {t('inventory.fields.sell_price')} (USD)
+                </label>
+                <NumericInput
+                  step="0.01"
+                  required
+                  value={editForm.sellPriceUsd}
+                  onChange={(val) => setEditForm({ ...editForm, sellPriceUsd: val })}
+                  className="w-full min-h-[42px] px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900 font-bold text-emerald-600"
+                />
+              </div>
+            </div>
+
+            {/* Batch Stock Quantities & Expiry Dates (Direct Ledger-Backed Editing) */}
+            <div className="p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/70 space-y-2.5">
+              <div className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
+                Batches & Stock Quantity (Updates Movement Ledger Automatically)
+              </div>
+              {editForm.batches.length === 0 ? (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+                    Initial Stock Quantity (Creates default batch & records ledger entry)
+                  </label>
+                  <NumericInput
+                    min={0}
+                    showZeroAsValue
+                    value={editForm.initialStockQuantity}
+                    onChange={(val) =>
+                      setEditForm({ ...editForm, initialStockQuantity: Math.max(0, val) })
+                    }
+                    className="w-full min-h-[40px] px-3 py-1.5 text-sm border rounded-lg bg-white dark:bg-slate-900 font-bold"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {editForm.batches.map((b, idx) => (
+                    <div
+                      key={b.id}
+                      className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700"
+                    >
+                      <div>
+                        <label className="block text-[10px] text-slate-400">Batch #</label>
+                        <input
+                          value={b.batchNumber}
+                          onChange={(e) => {
+                            const updated = [...editForm.batches];
+                            updated[idx].batchNumber = e.target.value;
+                            setEditForm({ ...editForm, batches: updated });
+                          }}
+                          className="w-full min-h-[36px] px-2.5 py-1 text-xs font-mono font-bold border rounded-lg bg-slate-50 dark:bg-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400">Expiry Date</label>
+                        <input
+                          type="date"
+                          value={b.expiryDate}
+                          onChange={(e) => {
+                            const updated = [...editForm.batches];
+                            updated[idx].expiryDate = e.target.value;
+                            setEditForm({ ...editForm, batches: updated });
+                          }}
+                          className="w-full min-h-[36px] px-2.5 py-1 text-xs border rounded-lg bg-slate-50 dark:bg-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400">
+                          Stock Qty (Ledger Balance)
+                        </label>
+                        <NumericInput
+                          min={0}
+                          showZeroAsValue
+                          value={b.quantity}
+                          onChange={(val) => {
+                            const updated = [...editForm.batches];
+                            updated[idx].quantity = Math.max(0, val);
+                            setEditForm({ ...editForm, batches: updated });
+                          }}
+                          className="w-full min-h-[36px] px-2.5 py-1 text-xs font-bold border rounded-lg bg-slate-50 dark:bg-slate-800"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Pharmacy & Vet Optional Clinical Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input
+                placeholder={t('inventory.fields.generic_name')}
+                value={editForm.genericName}
+                onChange={(e) => setEditForm({ ...editForm, genericName: e.target.value })}
+                className="min-h-[40px] px-3 py-1.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+              />
+              <input
+                placeholder={t('inventory.fields.dosage_form')}
+                value={editForm.dosageForm}
+                onChange={(e) => setEditForm({ ...editForm, dosageForm: e.target.value })}
+                className="min-h-[40px] px-3 py-1.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+              />
+              <input
+                placeholder={t('inventory.fields.strength')}
+                value={editForm.strength}
+                onChange={(e) => setEditForm({ ...editForm, strength: e.target.value })}
+                className="min-h-[40px] px-3 py-1.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+              />
+            </div>
+
+            {isVetBranch && (
+              <div className="space-y-2">
+                <span className="block text-xs font-semibold">
+                  {t('inventory.fields.target_species')}
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {SPECIES_ENUM.filter((s) => s !== 'HUMAN').map((sp) => (
+                    <button
+                      type="button"
+                      key={sp}
+                      onClick={() => toggleEditTargetSpecies(sp)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
+                        editForm.targetSpecies.includes(sp)
+                          ? 'bg-sky-600 text-white border-sky-600'
+                          : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700'
+                      }`}
+                    >
+                      {t(`inventory.species.${sp}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold mb-1">
+                Movement Ledger Reason / Audit Note (Optional)
+              </label>
+              <input
+                value={editForm.reason}
+                onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })}
+                placeholder="e.g., Updated product price / corrected physical batch count"
+                className="w-full min-h-[40px] px-3 py-1.5 text-xs sm:text-sm border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                disabled={isSavingEdit}
+                onClick={() => setEditingProduct(null)}
+                className="min-h-[42px] px-4 py-2 text-xs sm:text-sm font-semibold rounded-xl border border-slate-300 dark:border-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingEdit}
+                className="min-h-[42px] px-5 py-2 text-xs sm:text-sm rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold shadow-sm"
+              >
+                {isSavingEdit ? 'Saving & Recording Ledger...' : 'Save Changes & Record Ledger'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

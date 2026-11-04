@@ -348,6 +348,234 @@ inventoryRouter.post(
   }
 );
 
+/**
+ * PUT /api/inventory/products/:id
+ * Admin-only endpoint to edit an existing product (including SKU, name, prices, clinical fields,
+ * and batch stock quantities/expiry dates) while recording the change in the StockMovement ledger.
+ */
+inventoryRouter.put(
+  '/products/:id',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (!req.user || req.user.role !== 'ADMIN') {
+        res.status(403).json({
+          error: 'FORBIDDEN',
+          message: 'Only Admin can edit existing products.',
+        });
+        return;
+      }
+
+      const productId = req.params.id;
+      const existing = await prisma.product.findUnique({
+        where: { id: productId },
+        include: {
+          batches: {
+            where: { deletedAt: null },
+            orderBy: { expiryDate: 'asc' },
+          },
+        },
+      });
+
+      if (!existing) {
+        res.status(404).json({ error: 'PRODUCT_NOT_FOUND' });
+        return;
+      }
+
+      const body = req.body || {};
+      const nextSku = String(body.sku ?? existing.sku).trim();
+      const nextName = String(body.name ?? existing.name).trim();
+      const nextBarcode = body.barcode !== undefined ? (body.barcode ? String(body.barcode).trim() : null) : existing.barcode;
+      const nextBuyPrice = body.buyPriceUsd !== undefined ? Number(body.buyPriceUsd) : Number(existing.buyPriceUsd);
+      const nextSellPrice = body.sellPriceUsd !== undefined ? Number(body.sellPriceUsd) : Number(existing.sellPriceUsd);
+      const nextReorderLevel = body.reorderLevel !== undefined ? Number(body.reorderLevel) : existing.reorderLevel;
+      const editReason = String(body.reason || '').trim();
+
+      const changesSummary: string[] = [];
+      if (nextName !== existing.name) changesSummary.push(`Name: "${existing.name}" -> "${nextName}"`);
+      if (nextSku !== existing.sku) changesSummary.push(`SKU: ${existing.sku} -> ${nextSku}`);
+      if (Number(existing.buyPriceUsd) !== nextBuyPrice) {
+        changesSummary.push(`Buy: $${Number(existing.buyPriceUsd).toFixed(2)} -> $${nextBuyPrice.toFixed(2)}`);
+      }
+      if (Number(existing.sellPriceUsd) !== nextSellPrice) {
+        changesSummary.push(`Sell: $${Number(existing.sellPriceUsd).toFixed(2)} -> $${nextSellPrice.toFixed(2)}`);
+      }
+
+      const updatedProduct = await prisma.$transaction(async (tx) => {
+        const prod = await tx.product.update({
+          where: { id: existing.id },
+          data: {
+            sku: nextSku,
+            barcode: nextBarcode,
+            name: nextName,
+            buyPriceUsd: nextBuyPrice,
+            sellPriceUsd: nextSellPrice,
+            reorderLevel: nextReorderLevel,
+            genericName: body.genericName !== undefined ? (body.genericName || null) : existing.genericName,
+            dosageForm: body.dosageForm !== undefined ? (body.dosageForm || null) : existing.dosageForm,
+            strength: body.strength !== undefined ? (body.strength || null) : existing.strength,
+            isPrescriptionOnly:
+              body.isPrescriptionOnly !== undefined
+                ? Boolean(body.isPrescriptionOnly)
+                : existing.isPrescriptionOnly,
+            targetSpecies: Array.isArray(body.targetSpecies)
+              ? (body.targetSpecies as Species[])
+              : existing.targetSpecies,
+            dosePerKg: body.dosePerKg !== undefined ? (body.dosePerKg || null) : existing.dosePerKg,
+            withdrawalPeriodDays:
+              body.withdrawalPeriodDays !== undefined
+                ? Number(body.withdrawalPeriodDays) || null
+                : existing.withdrawalPeriodDays,
+            isColdChainRequired:
+              body.isColdChainRequired !== undefined
+                ? Boolean(body.isColdChainRequired)
+                : existing.isColdChainRequired,
+            version: { increment: 1 },
+          },
+        });
+
+        let recordedAnyBatchMovement = false;
+
+        // If batches array is provided in the edit payload, update batch metadata & record stock delta movements
+        if (Array.isArray(body.batches) && body.batches.length > 0) {
+          for (const bInput of body.batches) {
+            if (!bInput.id) continue;
+            const targetBatch = existing.batches.find((b) => b.id === bInput.id);
+            if (!targetBatch) continue;
+
+            const nextBatchNo = String(bInput.batchNumber || targetBatch.batchNumber).trim();
+            const nextExpiry = bInput.expiryDate ? new Date(bInput.expiryDate) : targetBatch.expiryDate;
+
+            await tx.productBatch.update({
+              where: { id: targetBatch.id },
+              data: {
+                batchNumber: nextBatchNo,
+                expiryDate: nextExpiry,
+                buyPriceUsd: nextBuyPrice,
+                sellPriceUsd: nextSellPrice,
+                version: { increment: 1 },
+              },
+            });
+
+            if (bInput.quantity !== undefined) {
+              const currentQty = await recalculateBatchBalanceFromLedger(
+                tx,
+                existing.branchId,
+                targetBatch.id
+              );
+              const desiredQty = Math.max(0, Math.round(Number(bInput.quantity)));
+              const delta = desiredQty - currentQty;
+
+              if (delta !== 0) {
+                const reasonText =
+                  editReason ||
+                  `Admin Product Edit (${nextName}): Stock ${currentQty} -> ${desiredQty}${
+                    changesSummary.length ? ` [${changesSummary.join(', ')}]` : ''
+                  }`;
+                await appendStockMovement(tx, {
+                  branchId: existing.branchId,
+                  productId: existing.id,
+                  batchId: targetBatch.id,
+                  userId: req.user!.id,
+                  type:
+                    delta > 0
+                      ? StockMovementType.ADJUSTMENT_PLUS
+                      : StockMovementType.ADJUSTMENT_MINUS,
+                  quantityDelta: delta,
+                  unitCostUsd: nextBuyPrice,
+                  referenceId: existing.id,
+                  referenceType: 'PRODUCT_EDIT',
+                  reason: reasonText,
+                });
+                recordedAnyBatchMovement = true;
+              }
+            }
+          }
+        }
+
+        // If no quantity delta was recorded yet, still record an audit movement in the Movement Ledger
+        // so that every Admin product edit appears in the Movement Ledger.
+        if (!recordedAnyBatchMovement) {
+          let targetBatch = existing.batches[0];
+          if (!targetBatch) {
+            targetBatch = await tx.productBatch.create({
+              data: {
+                branchId: existing.branchId,
+                productId: existing.id,
+                batchNumber: `INIT-${nextSku}`,
+                expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                buyPriceUsd: nextBuyPrice,
+                sellPriceUsd: nextSellPrice,
+                cachedQuantity: 0,
+              },
+            });
+          } else {
+            await tx.productBatch.update({
+              where: { id: targetBatch.id },
+              data: {
+                buyPriceUsd: nextBuyPrice,
+                sellPriceUsd: nextSellPrice,
+              },
+            });
+          }
+
+          const initialStockToAdd =
+            body.initialStockQuantity !== undefined && existing.batches.length === 0
+              ? Math.max(0, Math.round(Number(body.initialStockQuantity)))
+              : 0;
+
+          const reasonText =
+            editReason ||
+            `Admin Product Edit: ${
+              changesSummary.length > 0 ? changesSummary.join(', ') : `Updated ${nextName}`
+            }`;
+
+          await appendStockMovement(tx, {
+            branchId: existing.branchId,
+            productId: existing.id,
+            batchId: targetBatch.id,
+            userId: req.user!.id,
+            type: StockMovementType.ADJUSTMENT_PLUS,
+            quantityDelta: initialStockToAdd,
+            unitCostUsd: nextBuyPrice,
+            referenceId: existing.id,
+            referenceType: 'PRODUCT_EDIT',
+            reason: reasonText,
+          });
+        }
+
+        return prod;
+      });
+
+      await recordAuditLog({
+        branchId: existing.branchId,
+        userId: req.user.id,
+        action: 'PRODUCT_EDIT',
+        entityType: 'Product',
+        entityId: existing.id,
+        oldData: {
+          sku: existing.sku,
+          name: existing.name,
+          buyPriceUsd: Number(existing.buyPriceUsd),
+          sellPriceUsd: Number(existing.sellPriceUsd),
+        },
+        newData: {
+          sku: updatedProduct.sku,
+          name: updatedProduct.name,
+          buyPriceUsd: Number(updatedProduct.buyPriceUsd),
+          sellPriceUsd: Number(updatedProduct.sellPriceUsd),
+        },
+        reason: editReason || changesSummary.join(', '),
+        ipAddress: req.ip,
+      });
+
+      res.json({ product: updatedProduct });
+    } catch (error) {
+      console.error('[Inventory] Edit product error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
 // ============================================================================
 // 3. STOCK IN: PURCHASES & BATCH RECEIVING (Transactional + Ledger Append)
 // ============================================================================
@@ -1034,7 +1262,16 @@ inventoryRouter.get(
         take: limit,
       });
 
-      res.json({ movements });
+      const enrichedMovements = movements.map((m) => ({
+        ...m,
+        productName: m.product?.name || 'Unknown Product',
+        sku: m.product?.sku || 'N/A',
+        batchNumber: m.batch?.batchNumber || 'N/A',
+        userName: m.user?.fullName || m.user?.username || 'System',
+        branchCode: m.branch?.code || '',
+      }));
+
+      res.json({ movements: enrichedMovements });
     } catch (error) {
       console.error('[Inventory] Movements error:', error);
       res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });

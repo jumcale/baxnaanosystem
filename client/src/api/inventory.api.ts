@@ -92,6 +92,32 @@ export const inventoryApi = {
     return res.product;
   },
 
+  /**
+   * Edit an existing product and record movement in ledger (Admin only)
+   */
+  async updateProduct(
+    productId: string,
+    data: Omit<Partial<ProductItem>, 'batches'> & {
+      reason?: string;
+      initialStockQuantity?: number;
+      batches?: Array<{
+        id: string;
+        batchNumber: string;
+        expiryDate: string;
+        quantity: number;
+      }>;
+    }
+  ): Promise<ProductItem> {
+    const res = await apiRequest<{ product: ProductItem }>(
+      `/inventory/products/${productId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }
+    );
+    return res.product;
+  },
+
   async saveProduct(product: Partial<ProductItem>): Promise<ProductItem> {
     return this.createProduct(product);
   },
@@ -239,6 +265,7 @@ export const inventoryApi = {
    * Fetch stock movement ledger audit trail
    */
   async getMovements(params: {
+    branchId?: string;
     productId?: string;
     batchId?: string;
     type?: string;
@@ -250,8 +277,23 @@ export const inventoryApi = {
     if (params.type) q.append('type', params.type);
     if (params.limit) q.append('limit', String(params.limit));
 
-    const res = await apiRequest<{ movements: any[] }>(`/inventory/movements?${q.toString()}`);
-    return res.movements || [];
+    const headers =
+      params.branchId && params.branchId !== 'ALL'
+        ? { 'x-branch-id': params.branchId }
+        : undefined;
+
+    const res = await apiRequest<{ movements: any[] }>(
+      `/inventory/movements?${q.toString()}`,
+      { headers }
+    );
+    return (res.movements || []).map((m: any) => ({
+      ...m,
+      productName: m.productName || m.product?.name || 'Unknown Product',
+      sku: m.sku || m.product?.sku || 'N/A',
+      batchNumber: m.batchNumber || m.batch?.batchNumber || 'N/A',
+      userName: m.userName || m.user?.fullName || m.user?.username || 'System',
+      branchCode: m.branchCode || m.branch?.code || '',
+    }));
   },
 
   /**
