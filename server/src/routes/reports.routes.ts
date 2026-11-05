@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import {
   authenticateJWT,
@@ -10,15 +11,29 @@ import {
   classifyExpiryBucket,
   computeCustomerCreditAging,
   DashboardAnalyticsResponseSchema,
+  normalizePaymentToUsd,
+  CurrencyType,
 } from '@baxnaano/shared';
 import { recordAuditLog } from '../utils/audit';
+import {
+  addDaysToDateString,
+  computePeriodSummaryKpis,
+  computeSingleSaleFinancials,
+  d,
+  generateFullFinancialReport,
+  mogadishuDayEndUtc,
+  mogadishuDayStartUtc,
+  round2,
+  toMogadishuDateString,
+} from '../services/financial.service';
+import { ensureMidnightRolloverUpToDate } from '../services/rollover.service';
 
 export const reportsRouter = Router();
 
 reportsRouter.use(authenticateJWT);
 
 // ============================================================================
-// 1. DASHBOARD SUMMARY (XOGTA GUUD) - BRANCH & ADMIN CONSOLIDATED VIEWS
+// 1. DASHBOARD SUMMARY (XOGTA GUUD) - AFRICA/MOGADISHU (UTC+3) & DECIMAL ACCURATE
 // ============================================================================
 
 reportsRouter.get(
@@ -27,26 +42,36 @@ reportsRouter.get(
   requirePermissions('dashboard:view'),
   async (req: Request, res: Response): Promise<void> => {
     try {
+      // Ensure midnight rollover for Africa/Mogadishu (UTC+3) has processed
+      await ensureMidnightRolloverUpToDate('DASHBOARD_QUERY_CHECK', false);
+
       const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const thirtyDaysAgo = new Date(startOfToday.getTime() - 29 * 24 * 60 * 60 * 1000);
+      const todayMogStr = toMogadishuDateString(now);
+      const startOfToday = mogadishuDayStartUtc(todayMogStr);
+      const endOfToday = mogadishuDayEndUtc(todayMogStr);
+      const thirtyDaysAgoStr = addDaysToDateString(todayMogStr, -29);
+      const thirtyDaysAgo = mogadishuDayStartUtc(thirtyDaysAgoStr);
+      const monthStartStr = `${todayMogStr.slice(0, 7)}-01`;
+      const startOfMonth = mogadishuDayStartUtc(monthStartStr);
 
       const branchWhere = scopedWhere(req);
+      const activeBranchId = req.branchScope?.branchId || undefined;
 
       const [
         branches,
         recentSales,
-        todayExpenses,
+        monthExpenses,
         productsWithBatches,
         todayAppointments,
         openTasksCount,
+        todayPeriodKpis,
       ] = await Promise.all([
         prisma.branch.findMany({ where: { deletedAt: null }, orderBy: { code: 'asc' } }),
         prisma.sale.findMany({
           where: {
             ...branchWhere,
-            status: 'COMPLETED',
-            soldAt: { gte: thirtyDaysAgo },
+            status: { not: 'VOIDED' },
+            soldAt: { gte: thirtyDaysAgo <= startOfMonth ? thirtyDaysAgo : startOfMonth },
           },
           include: {
             items: {
@@ -61,7 +86,7 @@ reportsRouter.get(
           where: {
             ...branchWhere,
             approvalStatus: 'APPROVED',
-            expenseDate: { gte: startOfToday },
+            expenseDate: { gte: startOfMonth },
           },
         }),
         prisma.product.findMany({
@@ -75,7 +100,7 @@ reportsRouter.get(
             ...branchWhere,
             scheduledAt: {
               gte: startOfToday,
-              lte: new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1),
+              lte: endOfToday,
             },
           },
           orderBy: { scheduledAt: 'asc' },
@@ -86,30 +111,23 @@ reportsRouter.get(
             status: { in: ['OPEN', 'IN_PROGRESS'] },
           },
         }),
+        computePeriodSummaryKpis(startOfToday, endOfToday, activeBranchId),
       ]);
 
-      // 1. Today's Sales, COGS, Gross Profit, Expenses, Net Profit & Payment Split
-      let todaySalesUsd = 0;
-      let todayCogsUsd = 0;
-      let todayCashUsd = 0;
-      let todayMobileMoneyUsd = 0; // EVC_PLUS + ZAAD + EDAHAB
-      let todayCreditUsd = 0;
-
-      // 2. 30-day & 7-day Sales Trend Map
+      // 30-day & 7-day Sales Trend Map in Africa/Mogadishu dates
       const trendByDate = new Map<string, { date: string; salesUsd: number; profitUsd: number }>();
       for (let i = 29; i >= 0; i--) {
-        const d = new Date(startOfToday.getTime() - i * 24 * 60 * 60 * 1000);
-        const key = d.toISOString().slice(0, 10);
+        const key = addDaysToDateString(todayMogStr, -i);
         trendByDate.set(key, { date: key, salesUsd: 0, profitUsd: 0 });
       }
 
-      // 3. Top Selling Items (Last 30 Days)
+      // Top Selling Items (Last 30 Days)
       const topProductsMap = new Map<
         string,
         { productId: string; name: string; sku: string; quantitySold: number; revenueUsd: number }
       >();
 
-      // 4. Admin Branch Comparison Map (B1, B2, B3)
+      // Admin Branch Comparison Map (B1, B2, B3)
       const branchComparisonMap = new Map<
         string,
         {
@@ -121,6 +139,7 @@ reportsRouter.get(
           todaySalesUsd: number;
           monthSalesUsd: number;
           monthProfitUsd: number;
+          monthNetProfitUsd: number;
         }
       >();
 
@@ -134,68 +153,69 @@ reportsRouter.get(
           todaySalesUsd: 0,
           monthSalesUsd: 0,
           monthProfitUsd: 0,
+          monthNetProfitUsd: 0,
         });
       }
 
       for (const sale of recentSales) {
-        const saleTotal = Number(sale.totalUsd);
-        const saleDateKey = sale.soldAt.toISOString().slice(0, 10);
-        const isToday = sale.soldAt >= startOfToday;
+        const calc = computeSingleSaleFinancials(sale);
+        if (calc.isVoided) continue;
 
-        let saleCogs = 0;
-        for (const item of sale.items) {
-          const netQty = item.quantity - item.refundedQuantity;
-          if (netQty <= 0) continue;
-          saleCogs += netQty * Number(item.unitBuyPriceUsd);
+        const saleDateKey = toMogadishuDateString(sale.soldAt);
+        const isToday = saleDateKey === todayMogStr;
+        const isThisMonth = sale.soldAt >= startOfMonth;
+        const isLast30Days = sale.soldAt >= thirtyDaysAgo;
 
-          const existingProd = topProductsMap.get(item.productId) || {
-            productId: item.productId,
-            name: item.product.name,
-            sku: item.product.sku,
-            quantitySold: 0,
-            revenueUsd: 0,
-          };
-          existingProd.quantitySold += netQty;
-          existingProd.revenueUsd = Number(
-            (existingProd.revenueUsd + Number(item.subtotalUsd)).toFixed(2)
-          );
-          topProductsMap.set(item.productId, existingProd);
-        }
+        if (isLast30Days) {
+          for (const item of sale.items) {
+            const netQty = item.quantity - item.refundedQuantity;
+            if (netQty <= 0) continue;
 
-        const saleProfit = saleTotal - saleCogs;
+            const existingProd = topProductsMap.get(item.productId) || {
+              productId: item.productId,
+              name: item.product.name,
+              sku: item.product.sku,
+              quantitySold: 0,
+              revenueUsd: 0,
+            };
+            existingProd.quantitySold += netQty;
+            existingProd.revenueUsd = round2(
+              d(existingProd.revenueUsd).plus(d(item.subtotalUsd))
+            );
+            topProductsMap.set(item.productId, existingProd);
+          }
 
-        const trendPoint = trendByDate.get(saleDateKey);
-        if (trendPoint) {
-          trendPoint.salesUsd = Number((trendPoint.salesUsd + saleTotal).toFixed(2));
-          trendPoint.profitUsd = Number((trendPoint.profitUsd + saleProfit).toFixed(2));
+          const trendPoint = trendByDate.get(saleDateKey);
+          if (trendPoint) {
+            trendPoint.salesUsd = round2(d(trendPoint.salesUsd).plus(calc.netRevenueUsd));
+            trendPoint.profitUsd = round2(d(trendPoint.profitUsd).plus(calc.grossProfitUsd));
+          }
         }
 
         const bComp = branchComparisonMap.get(sale.branchId);
         if (bComp) {
-          bComp.monthSalesUsd = Number((bComp.monthSalesUsd + saleTotal).toFixed(2));
-          bComp.monthProfitUsd = Number((bComp.monthProfitUsd + saleProfit).toFixed(2));
-          if (isToday) {
-            bComp.todaySalesUsd = Number((bComp.todaySalesUsd + saleTotal).toFixed(2));
+          if (isThisMonth) {
+            bComp.monthSalesUsd = round2(d(bComp.monthSalesUsd).plus(calc.netRevenueUsd));
+            bComp.monthProfitUsd = round2(d(bComp.monthProfitUsd).plus(calc.grossProfitUsd));
           }
-        }
-
-        if (isToday) {
-          todaySalesUsd += saleTotal;
-          todayCogsUsd += saleCogs;
-          for (const pay of sale.payments) {
-            const pAmt = Number(pay.amountUsd);
-            if (pay.method === 'CASH') todayCashUsd += pAmt;
-            else if (pay.method === 'CREDIT') todayCreditUsd += pAmt;
-            else todayMobileMoneyUsd += pAmt;
+          if (isToday) {
+            bComp.todaySalesUsd = round2(d(bComp.todaySalesUsd).plus(calc.netRevenueUsd));
           }
         }
       }
 
-      const todayExpensesUsd = todayExpenses.reduce((s, e) => s + Number(e.amountUsd), 0);
-      const todayGrossProfitUsd = todaySalesUsd - todayCogsUsd;
-      const todayNetProfitUsd = todayGrossProfitUsd - todayExpensesUsd;
+      // Deduct approved monthly expenses per branch for monthNetProfitUsd
+      const branchMonthExpMap = new Map<string, Prisma.Decimal>();
+      for (const exp of monthExpenses) {
+        const prev = branchMonthExpMap.get(exp.branchId) || d(0);
+        branchMonthExpMap.set(exp.branchId, prev.plus(d(exp.amountUsd)));
+      }
+      for (const bComp of branchComparisonMap.values()) {
+        const bExp = branchMonthExpMap.get(bComp.branchId) || d(0);
+        bComp.monthNetProfitUsd = round2(d(bComp.monthProfitUsd).minus(bExp));
+      }
 
-      // 5. Inventory Low Stock & Expiry Buckets (30, 60, 90 Days)
+      // Inventory Low Stock & Expiry Buckets (30, 60, 90 Days)
       let lowStockCount = 0;
       let expiredBatchesCount = 0;
       let expiring30Count = 0;
@@ -224,15 +244,31 @@ reportsRouter.get(
         .sort((a, b) => b.quantitySold - a.quantitySold)
         .slice(0, 10);
 
+      const todayMobileMoneyUsd = round2(
+        d(todayPeriodKpis.cashByMethod.EVC_PLUS)
+          .plus(d(todayPeriodKpis.cashByMethod.ZAAD))
+          .plus(d(todayPeriodKpis.cashByMethod.EDAHAB))
+      );
+
       const payload = {
         kpis: {
-          todaySalesUsd: Number(todaySalesUsd.toFixed(2)),
-          todayExpensesUsd: Number(todayExpensesUsd.toFixed(2)),
-          todayGrossProfitUsd: Number(todayGrossProfitUsd.toFixed(2)),
-          todayNetProfitUsd: Number(todayNetProfitUsd.toFixed(2)),
-          todayCashUsd: Number(todayCashUsd.toFixed(2)),
-          todayMobileMoneyUsd: Number(todayMobileMoneyUsd.toFixed(2)),
-          todayCreditUsd: Number(todayCreditUsd.toFixed(2)),
+          todaySalesUsd: todayPeriodKpis.totalRevenueUsd,
+          todayRevenueUsd: todayPeriodKpis.totalRevenueUsd,
+          todayExpensesUsd: todayPeriodKpis.totalExpensesUsd,
+          todayGrossProfitUsd: todayPeriodKpis.grossProfitUsd,
+          todayNetProfitUsd: todayPeriodKpis.netProfitUsd,
+          todayCashUsd: todayPeriodKpis.cashByMethod.CASH,
+          todayMobileMoneyUsd,
+          todayCreditUsd: todayPeriodKpis.creditSalesUsd,
+          todayPurchasesUsd: todayPeriodKpis.totalPurchasesUsd,
+          todayCustomerPaymentsUsd: todayPeriodKpis.customerPaymentsUsd,
+          todaySupplierPaymentsUsd: todayPeriodKpis.supplierPaymentsUsd,
+          todayRefundsUsd: todayPeriodKpis.refundsUsd,
+          todayCashFlowUsd: todayPeriodKpis.netCashFlowUsd,
+          cashBalanceUsd: todayPeriodKpis.cashBalanceUsd,
+          outstandingReceivablesUsd: todayPeriodKpis.outstandingReceivablesUsd,
+          outstandingPayablesUsd: todayPeriodKpis.outstandingPayablesUsd,
+          businessDateMogadishu: todayMogStr,
         },
         alerts: {
           lowStockCount,
@@ -267,160 +303,81 @@ reportsRouter.get(
 );
 
 // ============================================================================
-// 2. COMPREHENSIVE REPORTS (WARBIXINNADA) - DAILY/WEEKLY/MONTHLY P&L, VALUATION, STAFF
+// 2. COMPLETE FINANCIAL REPORTING ENGINE (ALL MODULES, FILTERS & ROLLOVER)
 // ============================================================================
 
+reportsRouter.get(
+  '/financial',
+  enforceBranchScope({ requireConcreteBranchForWrites: false }),
+  requirePermissions('reports:view'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      await ensureMidnightRolloverUpToDate('FINANCIAL_REPORT_QUERY', false);
+
+      const q = req.query as Record<string, string | undefined>;
+      const effectiveBranchId =
+        req.user?.role === 'ADMIN'
+          ? req.branchScope?.branchId || q.branchId || 'ALL'
+          : req.user?.branchId || req.branchScope?.branchId || 'ALL';
+
+      const report = await generateFullFinancialReport({
+        preset: q.preset || q.period || 'THIS_MONTH',
+        fromDate: q.fromDate,
+        toDate: q.toDate,
+        branchId: effectiveBranchId,
+        transactionType: q.transactionType || 'ALL',
+        paymentMethod: q.paymentMethod || 'ALL',
+        employeeId: q.employeeId || 'ALL',
+        status: q.status || 'ALL',
+        search: q.search || '',
+      });
+
+      res.json(report);
+    } catch (error) {
+      console.error('[Reports] Full financial report error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
+// Legacy /comprehensive endpoint upgraded to use the centralized Financial Service
 reportsRouter.get(
   '/comprehensive',
   enforceBranchScope({ requireConcreteBranchForWrites: false }),
   requirePermissions('reports:view'),
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const period = (req.query.period as string) || 'MONTHLY'; // DAILY, WEEKLY, MONTHLY
-      const now = new Date();
-      const daysBack = period === 'DAILY' ? 1 : period === 'WEEKLY' ? 7 : 30;
-      const fromDate = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+      await ensureMidnightRolloverUpToDate('COMPREHENSIVE_REPORT_QUERY', false);
 
-      const branchWhere = scopedWhere(req);
+      const period = ((req.query.period as string) || 'MONTHLY').toUpperCase();
+      const effectiveBranchId = req.branchScope?.branchId || 'ALL';
 
-      const [sales, expenses, products, customers, appointments] = await Promise.all([
-        prisma.sale.findMany({
-          where: { ...branchWhere, status: 'COMPLETED', soldAt: { gte: fromDate } },
-          include: {
-            cashier: { select: { id: true, fullName: true } },
-            items: { include: { product: { select: { id: true, name: true, sku: true } } } },
-          },
-        }),
-        prisma.expense.findMany({
-          where: { ...branchWhere, approvalStatus: 'APPROVED', expenseDate: { gte: fromDate } },
-        }),
-        prisma.product.findMany({
-          where: branchWhere,
-          include: { batches: { where: { deletedAt: null } } },
-        }),
-        prisma.customer.findMany({
-          where: branchWhere,
-          include: { creditEntries: { where: { deletedAt: null } } },
-        }),
-        prisma.appointment.findMany({
-          where: { ...branchWhere, scheduledAt: { gte: fromDate } },
-        }),
-      ]);
-
-      // 1. Profit & Loss
-      let revenueUsd = 0;
-      let cogsUsd = 0;
-      const staffSalesMap = new Map<
-        string,
-        { userId: string; fullName: string; salesCount: number; totalRevenueUsd: number }
-      >();
-      const productVelocityMap = new Map<string, number>();
-
-      for (const s of sales) {
-        const rev = Number(s.totalUsd);
-        revenueUsd += rev;
-
-        for (const item of s.items) {
-          const netQty = item.quantity - item.refundedQuantity;
-          cogsUsd += netQty * Number(item.unitBuyPriceUsd);
-          productVelocityMap.set(
-            item.productId,
-            (productVelocityMap.get(item.productId) || 0) + netQty
-          );
-        }
-
-        const stf = staffSalesMap.get(s.cashierId) || {
-          userId: s.cashierId,
-          fullName: s.cashier.fullName,
-          salesCount: 0,
-          totalRevenueUsd: 0,
-        };
-        stf.salesCount++;
-        stf.totalRevenueUsd = Number((stf.totalRevenueUsd + rev).toFixed(2));
-        staffSalesMap.set(s.cashierId, stf);
-      }
-
-      const expensesUsd = expenses.reduce((sum, e) => sum + Number(e.amountUsd), 0);
-      const grossProfitUsd = revenueUsd - cogsUsd;
-      const netProfitUsd = grossProfitUsd - expensesUsd;
-
-      // 2. Stock Valuation & Fast vs Slow Movers
-      let totalStockCostValuationUsd = 0;
-      let totalStockRetailValuationUsd = 0;
-
-      const movers = products.map((p) => {
-        const stockQty = p.batches.reduce((sum, b) => sum + Math.max(0, b.cachedQuantity), 0);
-        const costVal = p.batches.reduce(
-          (sum, b) => sum + Math.max(0, b.cachedQuantity) * Number(b.buyPriceUsd),
-          0
-        );
-        const retailVal = p.batches.reduce(
-          (sum, b) => sum + Math.max(0, b.cachedQuantity) * Number(b.sellPriceUsd),
-          0
-        );
-        totalStockCostValuationUsd += costVal;
-        totalStockRetailValuationUsd += retailVal;
-
-        return {
-          productId: p.id,
-          sku: p.sku,
-          name: p.name,
-          stockQty,
-          quantitySoldInPeriod: productVelocityMap.get(p.id) || 0,
-          costValuationUsd: Number(costVal.toFixed(2)),
-        };
+      const report = await generateFullFinancialReport({
+        preset: period,
+        branchId: effectiveBranchId,
       });
 
-      const fastMovers = [...movers]
-        .sort((a, b) => b.quantitySoldInPeriod - a.quantitySoldInPeriod)
-        .slice(0, 10);
-      const slowMovers = [...movers]
-        .filter((m) => m.stockQty > 0)
-        .sort((a, b) => a.quantitySoldInPeriod - b.quantitySoldInPeriod)
-        .slice(0, 10);
-
-      // 3. Credit Aging Summary
-      const creditAgingTotals = {
-        totalDueUsd: 0,
-        bucket0to30Usd: 0,
-        bucket31to60Usd: 0,
-        bucket60PlusUsd: 0,
-      };
-      for (const c of customers) {
-        const ag = computeCustomerCreditAging(
-          c.creditEntries.map((e) => ({
-            id: e.id,
-            type: e.type,
-            amountDeltaUsd: Number(e.amountDeltaUsd),
-            createdAt: e.createdAt,
-            dueDate: e.dueDate,
-          }))
-        );
-        creditAgingTotals.totalDueUsd += ag.totalBalanceUsd;
-        creditAgingTotals.bucket0to30Usd += ag.bucket0to30Usd;
-        creditAgingTotals.bucket31to60Usd += ag.bucket31to60Usd;
-        creditAgingTotals.bucket60PlusUsd += ag.bucket60PlusUsd;
-      }
+      const appointments = await prisma.appointment.findMany({
+        where: scopedWhere(req),
+      });
 
       res.json({
-        period,
+        period: period === 'TODAY' ? 'DAILY' : period === 'THIS_WEEK' ? 'WEEKLY' : period === 'THIS_MONTH' ? 'MONTHLY' : period,
         profitAndLoss: {
-          revenueUsd: Number(revenueUsd.toFixed(2)),
-          cogsUsd: Number(cogsUsd.toFixed(2)),
-          grossProfitUsd: Number(grossProfitUsd.toFixed(2)),
-          expensesUsd: Number(expensesUsd.toFixed(2)),
-          netProfitUsd: Number(netProfitUsd.toFixed(2)),
+          revenueUsd: report.kpis.totalRevenueUsd,
+          cogsUsd: report.kpis.cogsUsd,
+          grossProfitUsd: report.kpis.grossProfitUsd,
+          expensesUsd: report.kpis.totalExpensesUsd,
+          netProfitUsd: report.kpis.netProfitUsd,
         },
         stockValuation: {
-          totalCostValuationUsd: Number(totalStockCostValuationUsd.toFixed(2)),
-          totalRetailValuationUsd: Number(totalStockRetailValuationUsd.toFixed(2)),
-          projectedMarginUsd: Number(
-            (totalStockRetailValuationUsd - totalStockCostValuationUsd).toFixed(2)
-          ),
+          totalCostValuationUsd: report.stockValuation.totalCostValuationUsd,
+          totalRetailValuationUsd: report.stockValuation.totalRetailValuationUsd,
+          projectedMarginUsd: report.stockValuation.projectedMarginUsd,
         },
-        fastMovers,
-        slowMovers,
-        creditAgingTotals,
+        fastMovers: report.fastMovers,
+        slowMovers: report.slowMovers,
+        creditAgingTotals: report.creditAgingTotals,
         appointmentsSummary: {
           total: appointments.length,
           done: appointments.filter((a) => a.status === 'DONE').length,
@@ -429,9 +386,15 @@ reportsRouter.get(
             (a) => a.status === 'CANCELLED' || a.status === 'NO_SHOW'
           ).length,
         },
-        staffPerformance: Array.from(staffSalesMap.values()).sort(
-          (a, b) => b.totalRevenueUsd - a.totalRevenueUsd
-        ),
+        staffPerformance: report.staffPerformance.map((s) => ({
+          staffId: s.employeeId,
+          userId: s.employeeId,
+          name: s.fullName,
+          fullName: s.fullName,
+          transactionCount: s.salesCount,
+          salesCount: s.salesCount,
+          totalRevenueUsd: s.netRevenueUsd,
+        })),
       });
     } catch (error) {
       console.error('[Reports] Comprehensive report error:', error);
@@ -441,7 +404,159 @@ reportsRouter.get(
 );
 
 // ============================================================================
-// 3. SETTINGS (DEJINTA): BRANCH PROFILE, RATE/TAX, USERS, AUDIT LOG, BACKUP
+// 3. SUPPLIER PAYMENTS (ACCOUNTS PAYABLE SETTLEMENT) & ROLLOVER VERIFICATION
+// ============================================================================
+
+reportsRouter.post(
+  '/supplier-payments',
+  enforceBranchScope({ requireConcreteBranchForWrites: false }),
+  requirePermissions('inventory:write'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const {
+        supplierId,
+        amountOriginal,
+        currency = 'USD',
+        exchangeRateUsed = 8500,
+        paymentMethod = 'CASH',
+        referenceNumber,
+        notes,
+      } = req.body || {};
+
+      if (!supplierId || !amountOriginal || Number(amountOriginal) <= 0) {
+        res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: 'Valid supplierId and positive payment amount are required.',
+        });
+        return;
+      }
+
+      const amountPaidUsd = normalizePaymentToUsd(
+        Number(amountOriginal),
+        currency as CurrencyType,
+        Number(exchangeRateUsed || 8500)
+      );
+
+      const result = await prisma.$transaction(async (tx) => {
+        const supplier = await tx.supplier.findFirst({
+          where: { id: supplierId, deletedAt: null },
+          include: {
+            purchases: {
+              where: { deletedAt: null },
+              orderBy: { purchaseDate: 'asc' },
+            },
+          },
+        });
+
+        if (!supplier) {
+          throw new Error('SUPPLIER_NOT_FOUND');
+        }
+
+        if (req.user!.role !== 'ADMIN' && req.user!.branchId !== supplier.branchId) {
+          throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+        }
+
+        const currentBal = d(supplier.balanceUsd);
+        const newBal = Prisma.Decimal.max(d(0), currentBal.minus(d(amountPaidUsd)));
+
+        const updatedSupplier = await tx.supplier.update({
+          where: { id: supplier.id },
+          data: {
+            balanceUsd: newBal,
+            version: { increment: 1 },
+          },
+        });
+
+        // Apply payment FIFO to oldest unpaid purchases
+        let remainingToApply = d(amountPaidUsd);
+        for (const pur of supplier.purchases) {
+          if (remainingToApply.lte(0)) break;
+          const unpaid = d(pur.totalAmountUsd).minus(d(pur.paidAmountUsd));
+          if (unpaid.lte(0)) continue;
+          const applyNow = Prisma.Decimal.min(unpaid, remainingToApply);
+          await tx.purchase.update({
+            where: { id: pur.id },
+            data: {
+              paidAmountUsd: d(pur.paidAmountUsd).plus(applyNow),
+              version: { increment: 1 },
+            },
+          });
+          remainingToApply = remainingToApply.minus(applyNow);
+        }
+
+        const refNo =
+          referenceNumber ||
+          `SUP-PAY-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(
+            100 + Math.random() * 900
+          )}`;
+
+        const auditEntry = await tx.auditLog.create({
+          data: {
+            branchId: supplier.branchId,
+            userId: req.user!.id,
+            action: 'SUPPLIER_PAYMENT',
+            entityType: 'Supplier',
+            entityId: supplier.id,
+            reason: notes || `Supplier payment to ${supplier.name} via ${paymentMethod}`,
+            oldData: { balanceUsd: round2(currentBal) },
+            newData: {
+              supplierId: supplier.id,
+              supplierName: supplier.name,
+              amountPaidUsd: round2(d(amountPaidUsd)),
+              currency,
+              amountOriginal: Number(amountOriginal),
+              paymentMethod,
+              referenceNumber: refNo,
+              balanceAfterUsd: round2(newBal),
+            },
+            ipAddress: req.ip,
+          },
+        });
+
+        return { supplier: updatedSupplier, paymentRecord: auditEntry };
+      });
+
+      res.status(201).json(result);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'SUPPLIER_PAYMENT_ERROR';
+      if (msg === 'SUPPLIER_NOT_FOUND') {
+        res.status(404).json({ error: msg });
+        return;
+      }
+      if (msg === 'CROSS_BRANCH_ACCESS_DENIED') {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      console.error('[Reports] Supplier payment error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
+reportsRouter.post(
+  '/rollover/verify',
+  enforceBranchScope({ requireConcreteBranchForWrites: false }),
+  requirePermissions('reports:view'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await ensureMidnightRolloverUpToDate(
+        req.user?.username || 'MANUAL_VERIFICATION',
+        true
+      );
+      res.json({
+        success: true,
+        timezone: 'Africa/Mogadishu',
+        ...result,
+      });
+    } catch (error) {
+      console.error('[Reports] Rollover verify error:', error);
+      res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+  }
+);
+
+// ============================================================================
+// 4. SETTINGS (DEJINTA): BRANCH PROFILE, RATE/TAX, USERS, AUDIT LOG
 // ============================================================================
 
 reportsRouter.patch(

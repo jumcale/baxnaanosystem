@@ -100,9 +100,16 @@ export const DashboardPage: React.FC = () => {
             <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-base sm:text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
-              {t('dashboard.title')}
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
+                {t('dashboard.title')}
+              </h1>
+              {analytics.kpis.businessDateMogadishu && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300">
+                  EAT: {analytics.kpis.businessDateMogadishu}
+                </span>
+              )}
+            </div>
             <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
               {activeBranchId === 'ALL'
                 ? 'Consolidated Real-Time Overview • B1 Pharmacy, B2 Vet & B3 Vet'
@@ -112,6 +119,15 @@ export const DashboardPage: React.FC = () => {
         </div>
 
         {/* Desktop-only Branch Filter Pills (Mobile uses the compact segmented bar in the sticky top header) */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => navigate('/reports?preset=TODAY')}
+            className="h-8 px-3 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold hover:bg-slate-800 flex items-center gap-1.5 transition"
+          >
+            <span>Financial Reports</span>
+            <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
+          </button>
         {user?.role === 'ADMIN' && (
           <div className="hidden lg:flex flex-wrap items-center gap-1.5">
             <button
@@ -144,6 +160,7 @@ export const DashboardPage: React.FC = () => {
             })}
           </div>
         )}
+        </div>
       </div>
 
       {/* Primary Financial KPI Grid (Compact 2-col on mobile for Sales & Expenses, full width for Channels) */}

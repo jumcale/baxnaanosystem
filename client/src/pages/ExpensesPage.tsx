@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Wallet,
@@ -9,6 +10,7 @@ import {
   Repeat,
   FileText,
   Trash2,
+  FileBarChart,
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
@@ -17,7 +19,8 @@ import { NumericInput } from '../components/NumericInput';
 
 export const ExpensesPage: React.FC = () => {
   const { t } = useTranslation();
-  const { user, activeBranchId, canPerform } = useAuth();
+  const navigate = useNavigate();
+  const { user, activeBranchId, canPerform, canViewModule } = useAuth();
 
   const [expenses, setExpenses] = useState<Array<any>>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -147,15 +150,27 @@ export const ExpensesPage: React.FC = () => {
           <Wallet className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 shrink-0" />
           <span className="truncate">{t('expenses.title')}</span>
         </h1>
-        {canPerform('expenses:create') && (
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shrink-0 transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>{t('expenses.add_expense')}</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {canViewModule('REPORTS') && (
+            <button
+              type="button"
+              onClick={() => navigate('/reports?type=EXPENSE&tab=TRANSACTIONS')}
+              className="min-h-[40px] px-3 py-2 bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm transition"
+            >
+              <FileBarChart className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">Financial Report</span>
+            </button>
+          )}
+          {canPerform('expenses:create') && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="min-h-[40px] px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center gap-1.5 shadow-sm shrink-0 transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>{t('expenses.add_expense')}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Expense Cards */}

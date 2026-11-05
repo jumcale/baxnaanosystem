@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   History,
@@ -6,6 +7,7 @@ import {
   RotateCcw,
   Search,
   FileText,
+  FileBarChart,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { salesApi, ReceiptData } from '../api';
@@ -14,7 +16,8 @@ import { printInvoicePdf } from '../services/receiptPdf';
 
 export const SalesHistoryPage: React.FC = () => {
   const { t } = useTranslation();
-  const { user, activeBranchId, canPerform } = useAuth();
+  const navigate = useNavigate();
+  const { user, activeBranchId, canPerform, canViewModule } = useAuth();
 
   const [sales, setSales] = useState<Array<any>>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,6 +101,16 @@ export const SalesHistoryPage: React.FC = () => {
             onChange={(e) => setDateFilter(e.target.value)}
             className="min-h-[40px] px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-xs sm:text-sm"
           />
+          {canViewModule('REPORTS') && (
+            <button
+              type="button"
+              onClick={() => navigate('/reports?type=SALE&tab=TRANSACTIONS')}
+              className="min-h-[40px] px-3 py-1.5 bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <FileBarChart className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Financial Report</span>
+            </button>
+          )}
         </div>
       </div>
 

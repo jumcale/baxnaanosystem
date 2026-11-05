@@ -17,6 +17,7 @@ import { quotationsRouter } from './routes/quotations.routes';
 import { appointmentsRouter } from './routes/appointments.routes';
 import { reportsRouter } from './routes/reports.routes';
 import { prisma } from './config/db';
+import { startMidnightRolloverScheduler } from './services/rollover.service';
 
 export const app = express();
 
@@ -61,6 +62,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
       status: 'ok',
       database: 'connected',
       service: 'Baxnaano Pharmacy & Veterinary API',
+      timezone: 'Africa/Mogadishu',
       timestamp: new Date().toISOString(),
     });
   } catch {
@@ -117,6 +119,7 @@ const PORT = env.PORT;
 
 if (!process.env.VITEST) {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Baxnaano Server] Listening on http://0.0.0.0:${PORT}`);
+    console.log(`[Baxnaano Server] Listening on http://0.0.0.0:${PORT} (TZ: Africa/Mogadishu UTC+3)`);
+    startMidnightRolloverScheduler();
   });
 }
