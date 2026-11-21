@@ -19,3 +19,27 @@ export const prisma =
 if (env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma;
 }
+
+let isDbConnected = false;
+
+export function getDbConnectionState(): boolean {
+  return isDbConnected;
+}
+
+/**
+ * Warms up the Prisma connection pool asynchronously in the background
+ * so database TCP/TLS handshakes never block HTTP server port binding on startup.
+ */
+export function warmDatabaseConnection(): void {
+  setImmediate(async () => {
+    try {
+      await prisma.$connect();
+      await prisma.$queryRaw`SELECT 1`;
+      isDbConnected = true;
+      console.log('[Database] PostgreSQL connection pool warmed up.');
+    } catch (err: any) {
+      isDbConnected = false;
+      console.warn('[Database] Background connection warm-up deferred:', err?.message || err);
+    }
+  });
+}

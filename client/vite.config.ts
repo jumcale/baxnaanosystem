@@ -7,7 +7,8 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // Registration is handled explicitly after window.load in main.tsx so it never blocks first paint
+      injectRegister: null,
       includeAssets: [
         'baxnaano-logo.jpg',
         'pwa-192x192.png',
@@ -52,15 +53,41 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,woff2}'],
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
-        // Pure Online-Only: No caching of /api/ endpoints to prevent stale data
-        runtimeCaching: [],
+        navigateFallbackDenylist: [/^\/api\//, /^\/health$/],
+        runtimeCaching: [
+          {
+            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico|woff2)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'baxnaano-static-media-v1',
+              expiration: {
+                maxEntries: 60,
+                maxAgeSeconds: 30 * 24 * 60 * 60,
+              },
+            },
+          },
+        ],
       },
     }),
   ],
   build: {
-    chunkSizeWarningLimit: 1600,
+    target: 'es2020',
+    cssCodeSplit: true,
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-i18n': ['i18next', 'react-i18next'],
+          'vendor-icons': ['lucide-react'],
+          'vendor-pdf': ['jspdf'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

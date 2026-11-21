@@ -356,6 +356,7 @@ model ProductBatch {
   @@unique([branchId, productId, batchNumber])
   @@index([branchId, expiryDate])
   @@index([branchId, productId])
+  @@index([productId, deletedAt, cachedQuantity])
 }
 
 // Ledger-based stock movements: Stock is NEVER overwritten; it is always the sum of quantityDelta
@@ -533,6 +534,8 @@ model Sale {
 
   @@unique([branchId, receiptNumber])
   @@index([branchId, soldAt])
+  @@index([branchId, deletedAt, soldAt])
+  @@index([deletedAt, soldAt])
   @@index([branchId, cashierId])
   @@index([branchId, customerId])
   @@index([branchId, status])
@@ -703,6 +706,7 @@ model Expense {
   approvedBy         User?          @relation("ExpenseApprover", fields: [approvedById], references: [id])
 
   @@index([branchId, expenseDate])
+  @@index([branchId, deletedAt, approvalStatus, expenseDate])
   @@index([branchId, approvalStatus])
   @@index([branchId, category])
 }
@@ -806,6 +810,7 @@ model AuditLog {
   @@index([branchId, createdAt])
   @@index([action])
   @@index([entityType, entityId])
+  @@index([action, entityType, entityId])
 }
 
 model SyncQueue {

@@ -63,6 +63,9 @@ export const AppShellLayout: React.FC = () => {
     setActiveBranchId,
     canViewModule,
     logout,
+    startupError,
+    isRevalidating,
+    retrySession,
   } = useAuth();
 
   const isOnline = useOnlineStatus();
@@ -597,19 +600,24 @@ export const AppShellLayout: React.FC = () => {
           )}
         </header>
 
-        {/* Server Disconnected Warning Banner */}
-        {!isServerHealthy && (
+        {/* Server Disconnected / Cold-Start Timeout Warning Banner with Retry */}
+        {(!isServerHealthy || startupError) && (
           <div className="bg-red-600 text-white px-3 py-1.5 text-xs font-semibold flex items-center justify-between gap-2 shadow-sm shrink-0">
             <div className="flex items-center gap-1.5 min-w-0">
               <WifiOff className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{t('sync.server_disconnected')}</span>
+              <span className="truncate">
+                {startupError || t('sync.server_disconnected')}
+              </span>
             </div>
             <button
-              onClick={checkHealth}
-              disabled={isCheckingHealth}
-              className="bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded text-[11px] font-bold transition shrink-0 whitespace-nowrap"
+              onClick={() => {
+                checkHealth();
+                retrySession();
+              }}
+              disabled={isCheckingHealth || isRevalidating}
+              className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-0.5 rounded text-[11px] font-bold transition shrink-0 whitespace-nowrap"
             >
-              {isCheckingHealth ? '...' : 'Retry'}
+              {isCheckingHealth || isRevalidating ? 'Retrying...' : 'Retry'}
             </button>
           </div>
         )}

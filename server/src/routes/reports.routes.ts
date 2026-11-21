@@ -42,8 +42,8 @@ reportsRouter.get(
   requirePermissions('dashboard:view'),
   async (req: Request, res: Response): Promise<void> => {
     try {
-      // Ensure midnight rollover for Africa/Mogadishu (UTC+3) has processed
-      await ensureMidnightRolloverUpToDate('DASHBOARD_QUERY_CHECK', false);
+      // Trigger midnight rollover verification asynchronously so it never blocks dashboard load
+      ensureMidnightRolloverUpToDate('DASHBOARD_QUERY_CHECK', false).catch(() => {});
 
       const now = new Date();
       const todayMogStr = toMogadishuDateString(now);
@@ -88,11 +88,23 @@ reportsRouter.get(
             approvalStatus: 'APPROVED',
             expenseDate: { gte: startOfMonth },
           },
+          select: {
+            branchId: true,
+            amountUsd: true,
+          },
         }),
         prisma.product.findMany({
           where: branchWhere,
-          include: {
-            batches: { where: { deletedAt: null } },
+          select: {
+            id: true,
+            reorderLevel: true,
+            batches: {
+              where: { deletedAt: null, cachedQuantity: { gt: 0 } },
+              select: {
+                cachedQuantity: true,
+                expiryDate: true,
+              },
+            },
           },
         }),
         prisma.appointment.findMany({

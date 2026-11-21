@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -14,10 +14,64 @@ import {
   PieChart,
   ArrowUpRight,
   Clock,
+  RefreshCw,
 } from 'lucide-react';
 import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
 import { reportsApi, DashboardAnalyticsResponse } from '../api';
+
+const DASHBOARD_CACHE_PREFIX = 'baxnaano_dashboard_cache_v2_';
+
+function createInitialDashboardShell(activeBranchId: string): DashboardAnalyticsResponse {
+  const branches = Object.values(BAXNAANO_BRANCHES).map((b) => ({
+    branchId: b.id,
+    code: b.code,
+    name: b.name,
+    type: b.type,
+    location: b.location,
+    todaySalesUsd: 0,
+    monthSalesUsd: 0,
+    monthProfitUsd: 0,
+    monthNetProfitUsd: 0,
+  }));
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const cached = localStorage.getItem(`${DASHBOARD_CACHE_PREFIX}${activeBranchId}`);
+      if (cached) {
+        return JSON.parse(cached) as DashboardAnalyticsResponse;
+      }
+    } catch {
+      // fallback to empty shell
+    }
+  }
+
+  return {
+    kpis: {
+      todaySalesUsd: 0,
+      todayExpensesUsd: 0,
+      todayGrossProfitUsd: 0,
+      todayNetProfitUsd: 0,
+      todayCashUsd: 0,
+      todayMobileMoneyUsd: 0,
+      todayCreditUsd: 0,
+    },
+    alerts: {
+      lowStockCount: 0,
+      expiredBatchesCount: 0,
+      expiring30Count: 0,
+      expiring60Count: 0,
+      expiring90Count: 0,
+      todayAppointmentsCount: 0,
+      openTasksCount: 0,
+    },
+    trend7Days: [],
+    trend30Days: [],
+    topSellingItems: [],
+    todayAppointments: [],
+    branchComparison: branches,
+  };
+}
 
 export const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
@@ -25,64 +79,51 @@ export const DashboardPage: React.FC = () => {
   const { user, activeBranchId, setActiveBranchId } = useAuth();
 
   const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
-  const [analytics, setAnalytics] = useState<DashboardAnalyticsResponse | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Render dashboard shell immediately (from last known snapshot or zeroed shell) without blocking UI
+  const [analytics, setAnalytics] = useState<DashboardAnalyticsResponse>(() =>
+    createInitialDashboardShell(activeBranchId)
+  );
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let isMounted = true;
-    const refresh = async () => {
-      try {
-        const data = await reportsApi.getDashboard(activeBranchId);
-        if (isMounted) {
-          setAnalytics(data);
-          setError(null);
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setError(err?.message || 'Error fetching dashboard data');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
+  const refresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const data = await reportsApi.getDashboard(activeBranchId);
+      setAnalytics(data);
+      setError(null);
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(
+            `${DASHBOARD_CACHE_PREFIX}${activeBranchId}`,
+            JSON.stringify(data)
+          );
+        } catch {
+          // ignore storage quota errors
         }
       }
-    };
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          'Dashboard sync timed out after 10 seconds. The server may be waking up — click Retry.'
+      );
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    setAnalytics(createInitialDashboardShell(activeBranchId));
     refresh();
 
-    const timer = setInterval(refresh, 20_000);
+    const timer = setInterval(refresh, 25_000);
     const onFocus = () => refresh();
     window.addEventListener('focus', onFocus);
     return () => {
-      isMounted = false;
       clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
-  }, [activeBranchId]);
-
-  if (isLoading && !analytics) {
-    return (
-      <div className="p-8 text-center text-xs sm:text-sm font-semibold text-slate-500">
-        Loading Authoritative Dashboard from Central Database...
-      </div>
-    );
-  }
-
-  if (error && !analytics) {
-    return (
-      <div className="p-8 text-center space-y-3">
-        <div className="text-xs sm:text-sm font-bold text-red-500">{error}</div>
-        <button
-          onClick={() => reportsApi.getDashboard(activeBranchId).then(setAnalytics)}
-          className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-xl text-xs"
-        >
-          Retry Connection
-        </button>
-      </div>
-    );
-  }
-
-  if (!analytics) return null;
+  }, [activeBranchId, refresh]);
 
   const activeTrend = trendRange === '7d' ? analytics.trend7Days : analytics.trend30Days;
   const maxTrendSale = Math.max(10, ...activeTrend.map((d) => d.salesUsd));
@@ -93,7 +134,26 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="p-3 sm:p-5 md:p-6 max-w-[1600px] mx-auto space-y-3.5 sm:space-y-5">
-      {/* Compact Page Header — Duplicate branch filter hidden on mobile since sticky top bar has All|B1|B2|B3 */}
+      {/* Visible Non-Blocking Error Banner with 10s Timeout Retry Button */}
+      {error && (
+        <div className="bg-red-50 dark:bg-red-950/60 border border-red-300 dark:border-red-800 rounded-xl p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-red-700 dark:text-red-300">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={isRefreshing}
+            className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Retrying...' : 'Retry Now'}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Compact Page Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 px-3.5 py-3 sm:px-5 sm:py-4 rounded-xl sm:rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center shrink-0">
@@ -109,6 +169,12 @@ export const DashboardPage: React.FC = () => {
                   EAT: {analytics.kpis.businessDateMogadishu}
                 </span>
               )}
+              {isRefreshing && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400">
+                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-500" />
+                  <span>Syncing...</span>
+                </span>
+              )}
             </div>
             <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">
               {activeBranchId === 'ALL'
@@ -118,52 +184,54 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Desktop-only Branch Filter Pills (Mobile uses the compact segmented bar in the sticky top header) */}
+        {/* Desktop-only Branch Filter Pills */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => navigate('/reports?preset=TODAY')}
-            className="h-8 px-3 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold hover:bg-slate-800 flex items-center gap-1.5 transition"
-          >
-            <span>Financial Reports</span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
-          </button>
-        {user?.role === 'ADMIN' && (
-          <div className="hidden lg:flex flex-wrap items-center gap-1.5">
+          {(user?.role === 'ADMIN' || user?.role === 'BRANCH_MANAGER') && (
             <button
               type="button"
-              onClick={() => setActiveBranchId('ALL')}
-              className={`h-8 px-3 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-                activeBranchId === 'ALL'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
+              onClick={() => navigate('/reports?preset=TODAY')}
+              className="h-8 px-3 rounded-lg bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold hover:bg-slate-800 flex items-center gap-1.5 transition"
             >
-              All Branches
+              <span>Financial Reports</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-emerald-400" />
             </button>
-            {Object.values(BAXNAANO_BRANCHES).map((b) => {
-              const isSelected = activeBranchId === b.id || activeBranchId === b.code;
-              return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => setActiveBranchId(b.id)}
-                  className={`h-8 px-3 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
-                    isSelected
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {b.code}: {b.name.replace('Baxnaano ', '')} ({b.location})
-                </button>
-              );
-            })}
-          </div>
-        )}
+          )}
+          {user?.role === 'ADMIN' && (
+            <div className="hidden lg:flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveBranchId('ALL')}
+                className={`h-8 px-3 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                  activeBranchId === 'ALL'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                All Branches
+              </button>
+              {Object.values(BAXNAANO_BRANCHES).map((b) => {
+                const isSelected = activeBranchId === b.id || activeBranchId === b.code;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setActiveBranchId(b.id)}
+                    className={`h-8 px-3 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {b.code}: {b.name.replace('Baxnaano ', '')} ({b.location})
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Primary Financial KPI Grid (Compact 2-col on mobile for Sales & Expenses, full width for Channels) */}
+      {/* Primary Financial KPI Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
         {/* Card 1: Today's Sales */}
         <div className="bg-white dark:bg-slate-900 p-3.5 sm:p-4 rounded-xl sm:rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm flex flex-col justify-between">
@@ -244,7 +312,7 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Operational Alerts & Action Strip (Compact 2x2 Grid on Mobile, 4 Columns on Desktop) */}
+      {/* Operational Alerts & Action Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
         <button
           type="button"

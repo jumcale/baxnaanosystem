@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Baxnaano Pharmacy & Veterinary System</title>
     <meta name="description" content="Baxnaano Multi-Branch Pharmacy & Veterinary ERP & POS Management System" />
+    <meta name="theme-color" content="#059669" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -16,7 +17,21 @@
     <link rel="manifest" href="/manifest.webmanifest" />
   </head>
   <body class="bg-slate-50 dark:bg-slate-900">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Instant App Shell Skeleton rendered before JS bundle execution -->
+      <div style="min-height:100vh;background:#0f172a;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;">
+        <div style="height:56px;border-bottom:1px solid #1e293b;padding:0 20px;display:flex;align-items:center;justify-content:space-between;background:#0f172a;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:32px;height:32px;border-radius:9999px;background:#059669;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff;">B</div>
+            <div>
+              <div style="font-weight:800;font-size:13px;color:#34d399;letter-spacing:-0.01em;">BAXNAANO SYSTEM</div>
+              <div style="font-size:10px;color:#94a3b8;">Pharmacy &amp; Veterinary ERP</div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:#34d399;font-weight:600;">Loading App Shell...</div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

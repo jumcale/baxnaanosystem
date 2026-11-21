@@ -9,12 +9,25 @@ import {
   ROLE_PERMISSIONS,
 } from '@baxnaano/shared';
 import i18n from '../i18n';
-import { API_BASE, setApiAccessToken } from '../api/client';
+import {
+  API_BASE,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  fetchWithTimeout,
+  getApiAccessToken,
+  setApiAccessToken,
+} from '../api/client';
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;
   accessToken: string | null;
+  /** False immediately when a cached session exists so the UI shell never blocks on startup */
   isLoading: boolean;
+  /** True while background session refresh is in flight */
+  isRevalidating: boolean;
+  /** Non-null if startup session hydration timed out (10s) or failed due to server sleep/network */
+  startupError: string | null;
+  /** Retries session hydration on demand after a timeout or cold-start error */
+  retrySession: () => Promise<void>;
   /** Active branch ID ('ALL' allowed only for ADMIN) */
   activeBranchId: string;
   setActiveBranchId: (branchId: string) => void;
@@ -28,106 +41,171 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_BRANCH_KEY = 'baxnaano_active_branch';
+const STORAGE_USER_CACHE_KEY = 'baxnaano_session_user';
+
+function readCachedUser(): AuthenticatedUser | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_USER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AuthenticatedUser;
+    if (!parsed || !parsed.id || !parsed.role) return null;
+    return {
+      ...parsed,
+      permissions:
+        ROLE_PERMISSIONS[parsed.role as keyof typeof ROLE_PERMISSIONS] ||
+        parsed.permissions ||
+        [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user: AuthenticatedUser | null): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (user) {
+      localStorage.setItem(STORAGE_USER_CACHE_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(STORAGE_USER_CACHE_KEY);
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<AuthenticatedUser | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Optimistically hydrate from cached user profile so the UI shell renders in 0ms without blocking!
+  const [user, setUser] = useState<AuthenticatedUser | null>(() => readCachedUser());
+  const [accessToken, setAccessToken] = useState<string | null>(() => getApiAccessToken());
+  // Never block the UI shell if we already have a cached user session
+  const [isLoading, setIsLoading] = useState<boolean>(() => readCachedUser() === null);
+  const [isRevalidating, setIsRevalidating] = useState<boolean>(true);
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   const [activeBranchId, setActiveBranchIdState] = useState<string>(() => {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem(STORAGE_BRANCH_KEY);
       if (saved) return saved;
     }
+    const cached = readCachedUser();
+    if (cached?.role === 'ADMIN') return 'ALL';
+    if (cached?.branchId) return cached.branchId;
     return BAXNAANO_BRANCHES.B1.id;
   });
 
-  const logout = useCallback(async () => {
-    try {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    } catch {
-      // ignore network errors on logout
-    } finally {
-      setAccessToken(null);
-      setApiAccessToken(null);
-      setUser(null);
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('baxnaano_access_token');
-        localStorage.removeItem('baxnaano_auth_user');
-        localStorage.removeItem(STORAGE_BRANCH_KEY);
-      }
+  const clearAuthState = useCallback(() => {
+    setAccessToken(null);
+    setApiAccessToken(null);
+    setUser(null);
+    writeCachedUser(null);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('baxnaano_access_token');
+      localStorage.removeItem('baxnaano_auth_user');
+      localStorage.removeItem(STORAGE_BRANCH_KEY);
     }
   }, []);
 
-  // Hydrate session on app mount via HttpOnly refresh cookie
-  useEffect(() => {
-    let isMounted = true;
-
-    async function hydrateSession() {
-      try {
-        // Clear any old legacy tokens from localStorage for security
-        if (typeof localStorage !== 'undefined') {
-          localStorage.removeItem('baxnaano_access_token');
-          localStorage.removeItem('baxnaano_auth_user');
-        }
-
-        const res = await fetch(`${API_BASE}/auth/refresh`, {
+  const logout = useCallback(async () => {
+    try {
+      await fetchWithTimeout(
+        `${API_BASE}/auth/logout`,
+        {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-        });
+        },
+        4000
+      );
+    } catch {
+      // ignore network errors on logout
+    } finally {
+      clearAuthState();
+      setStartupError(null);
+      setIsLoading(false);
+    }
+  }, [clearAuthState]);
 
-        if (res.ok && isMounted) {
-          const data = await res.json();
-          setAccessToken(data.accessToken);
-          setApiAccessToken(data.accessToken);
-          const authUser: AuthenticatedUser = {
-            ...data.user,
-            permissions: ROLE_PERMISSIONS[data.user.role as keyof typeof ROLE_PERMISSIONS] || data.user.permissions || [],
-          };
-          setUser(authUser);
-          if (authUser.role === 'ADMIN') {
-            const saved = localStorage.getItem(STORAGE_BRANCH_KEY);
-            setActiveBranchIdState(saved || 'ALL');
-          } else if (authUser.branchId) {
-            setActiveBranchIdState(authUser.branchId);
-            localStorage.setItem(STORAGE_BRANCH_KEY, authUser.branchId);
-          }
-        } else if (isMounted) {
-          setUser(null);
-          setAccessToken(null);
-          setApiAccessToken(null);
-        }
-      } catch {
-        if (isMounted) {
-          setUser(null);
-          setAccessToken(null);
-          setApiAccessToken(null);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
+  const hydrateSession = useCallback(async () => {
+    setIsRevalidating(true);
+    setStartupError(null);
+    // Only show loading state if we don't already have an optimistic cached user
+    if (!readCachedUser()) {
+      setIsLoading(true);
     }
 
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/auth/refresh`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        DEFAULT_REQUEST_TIMEOUT_MS
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        setAccessToken(data.accessToken);
+        setApiAccessToken(data.accessToken);
+        const authUser: AuthenticatedUser = {
+          ...data.user,
+          permissions:
+            ROLE_PERMISSIONS[data.user.role as keyof typeof ROLE_PERMISSIONS] ||
+            data.user.permissions ||
+            [],
+        };
+        setUser(authUser);
+        writeCachedUser(authUser);
+        setStartupError(null);
+
+        if (authUser.role === 'ADMIN') {
+          const saved = localStorage.getItem(STORAGE_BRANCH_KEY);
+          setActiveBranchIdState(saved || 'ALL');
+        } else if (authUser.branchId) {
+          setActiveBranchIdState(authUser.branchId);
+          localStorage.setItem(STORAGE_BRANCH_KEY, authUser.branchId);
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        // Authoritative response: no active refresh cookie -> clear optimistic user and go to /login
+        clearAuthState();
+        setStartupError(null);
+      } else {
+        // 502 / 503 / 504 (Render cold start or DB waking up)
+        const msg =
+          res.status === 503
+            ? 'Server is awake, but the database is still starting up (HTTP 503). Please click Retry in a few seconds.'
+            : `Server returned HTTP ${res.status} while starting up. Please click Retry.`;
+        setStartupError(msg);
+      }
+    } catch (err: any) {
+      // Timeout (10s) or network unreachable: keep optimistic UI shell if cached user exists, and surface Retry error!
+      const isTimeout = err?.isTimeout || err?.code === 'REQUEST_TIMEOUT';
+      const message = isTimeout
+        ? 'The server took longer than 10 seconds to respond (Render free-tier cold start). Click Retry to connect.'
+        : err?.message ||
+          'Unable to reach the Baxnaano server. Please check your connection and click Retry.';
+      setStartupError(message);
+    } finally {
+      setIsLoading(false);
+      setIsRevalidating(false);
+    }
+  }, [clearAuthState]);
+
+  useEffect(() => {
     hydrateSession();
 
-    // Global listener for 401 unauthorized
     const handleUnauthorized = () => {
-      logout();
+      clearAuthState();
     };
     window.addEventListener('baxnaano:auth-unauthorized', handleUnauthorized);
 
     return () => {
-      isMounted = false;
       window.removeEventListener('baxnaano:auth-unauthorized', handleUnauthorized);
     };
-  }, [logout]);
+  }, [hydrateSession, clearAuthState]);
 
   useEffect(() => {
     if (user) {
@@ -151,16 +229,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const login = (token: string, authUser: AuthenticatedUser) => {
+    const normalizedUser: AuthenticatedUser = {
+      ...authUser,
+      permissions:
+        ROLE_PERMISSIONS[authUser.role as keyof typeof ROLE_PERMISSIONS] ||
+        authUser.permissions ||
+        [],
+    };
     setAccessToken(token);
     setApiAccessToken(token);
-    setUser(authUser);
-    const initialBranch = authUser.role === 'ADMIN' ? 'ALL' : authUser.branchId!;
+    setUser(normalizedUser);
+    writeCachedUser(normalizedUser);
+    setStartupError(null);
+    setIsLoading(false);
+    const initialBranch = normalizedUser.role === 'ADMIN' ? 'ALL' : normalizedUser.branchId!;
     setActiveBranchIdState(initialBranch);
     localStorage.setItem(STORAGE_BRANCH_KEY, initialBranch);
   };
 
   const updateUser = (updatedUser: AuthenticatedUser) => {
     setUser(updatedUser);
+    writeCachedUser(updatedUser);
   };
 
   const canViewModule = (mod: AppModule): boolean => {
@@ -179,6 +268,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         accessToken,
         isLoading,
+        isRevalidating,
+        startupError,
+        retrySession: hydrateSession,
         activeBranchId,
         setActiveBranchId,
         login,

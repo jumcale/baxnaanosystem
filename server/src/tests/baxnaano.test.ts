@@ -168,7 +168,11 @@ describe('4. RBAC Matrix & Multi-Branch API Isolation Integration Tests', () => 
     expect(hasPermission('ADMIN', 'reports:view')).toBe(true);
   });
 
-  it('checks /api/health status reporting ok or degraded based on db connectivity', async () => {
+  it('checks lightweight /health and /api/health status endpoints for fast Render cold start', async () => {
+    const fastRes = await request(app).get('/health');
+    expect(fastRes.status).toBe(200);
+    expect(fastRes.body.status).toBe('ok');
+
     const res = await request(app).get('/api/health');
     expect([200, 503]).toContain(res.status);
     expect(['ok', 'degraded']).toContain(res.body.status);

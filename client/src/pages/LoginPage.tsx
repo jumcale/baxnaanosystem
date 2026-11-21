@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Eye, EyeOff, Loader2, KeyRound } from 'lucide-react';
+import { Eye, EyeOff, Loader2, KeyRound, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { API_BASE_URL } from '../api/client';
+import {
+  API_BASE_URL,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  checkServerHealth,
+  fetchWithTimeout,
+} from '../api/client';
 import { AuthenticatedUser } from '@baxnaano/shared';
 
 export const LoginPage: React.FC = () => {
@@ -26,18 +31,26 @@ export const LoginPage: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Send a lightweight background /health wake-up ping as soon as LoginPage renders
+  useEffect(() => {
+    checkServerHealth().catch(() => {});
+  }, []);
+
+  const performLogin = async () => {
     setError(null);
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
+      const res = await fetchWithTimeout(
+        `${API_BASE_URL}/auth/login`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        },
+        DEFAULT_REQUEST_TIMEOUT_MS
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -60,17 +73,30 @@ export const LoginPage: React.FC = () => {
       } else if (res.status === 429) {
         setError('Too many login attempts. Please wait 15 minutes before trying again.');
       } else if (res.status === 503) {
-        setError('Server-ka wuu shaqaynayaa, laakiin database-ka lama heli karo. Fadlan bilaaw PostgreSQL oo mar kale isku day.');
+        setError(
+          'Server-ka wuu shaqaynayaa, laakiin database-ka wali wuu kacayaa (503). Fadlan taabo Retry.'
+        );
       } else {
-        setError(`Server error (${res.status}). Please try again.`);
+        setError(`Server error (${res.status}). Please click Retry.`);
       }
-    } catch {
-      setError(
-        'Server-ka lama gaari karo / Central server is unreachable. Please check your internet connection.'
-      );
+    } catch (err: any) {
+      if (err?.isTimeout || err?.code === 'REQUEST_TIMEOUT') {
+        setError(
+          'Sign-in timed out after 10 seconds (server waking up from sleep). Please click Retry.'
+        );
+      } else {
+        setError(
+          'Server-ka lama gaari karo / Central server is unreachable. Please check your internet connection and click Retry.'
+        );
+      }
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performLogin();
   };
 
   const handlePasswordReset = async (e: React.FormEvent) => {
@@ -91,18 +117,22 @@ export const LoginPage: React.FC = () => {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/change-password`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${pendingResetUser.token}`,
+      const res = await fetchWithTimeout(
+        `${API_BASE_URL}/auth/change-password`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${pendingResetUser.token}`,
+          },
+          body: JSON.stringify({
+            currentPassword: pendingResetUser.currentPass,
+            newPassword,
+          }),
         },
-        body: JSON.stringify({
-          currentPassword: pendingResetUser.currentPass,
-          newPassword,
-        }),
-      });
+        DEFAULT_REQUEST_TIMEOUT_MS
+      );
 
       if (res.ok) {
         const updatedUser = { ...pendingResetUser.user, mustChangePassword: false };
@@ -113,8 +143,12 @@ export const LoginPage: React.FC = () => {
 
       const body = await res.json().catch(() => ({}));
       setError(body.message || 'Failed to update password. Please try again.');
-    } catch {
-      setError('Connection error while updating password.');
+    } catch (err: any) {
+      setError(
+        err?.isTimeout
+          ? 'Request timed out after 10 seconds. Please click Retry.'
+          : 'Connection error while updating password.'
+      );
     } finally {
       setIsLoading(false);
     }
@@ -207,8 +241,19 @@ export const LoginPage: React.FC = () => {
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-red-600/30 border border-red-500 text-xs font-semibold text-center">
-            {error}
+          <div className="p-3.5 rounded-xl bg-red-600/25 border border-red-500/80 text-xs font-semibold text-center space-y-2.5">
+            <div>{error}</div>
+            {username && password && (
+              <button
+                type="button"
+                onClick={performLogin}
+                disabled={isLoading}
+                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs inline-flex items-center gap-1.5 transition"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>Retry Sign In</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -257,7 +302,7 @@ export const LoginPage: React.FC = () => {
             {isLoading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Checking...</span>
+                <span>Signing in (10s timeout)...</span>
               </>
             ) : (
               t('auth.sign_in')
