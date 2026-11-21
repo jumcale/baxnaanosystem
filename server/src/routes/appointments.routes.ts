@@ -95,6 +95,14 @@ appointmentsRouter.post(
 
       const data = parsed.data;
 
+      if (data.id) {
+        const existing = await prisma.appointment.findUnique({ where: { id: data.id } });
+        if (existing && existing.branchId !== data.branchId) {
+          res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+          return;
+        }
+      }
+
       const appointment = await prisma.appointment.upsert({
         where: { id: data.id || '00000000-0000-0000-0000-000000000000' },
         update: {
@@ -285,6 +293,15 @@ appointmentsRouter.post(
       }
 
       const data = parsed.data;
+
+      if (data.id) {
+        const existing = await prisma.task.findUnique({ where: { id: data.id } });
+        if (existing && existing.branchId !== data.branchId) {
+          res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+          return;
+        }
+      }
+
       const task = await prisma.task.upsert({
         where: { id: data.id || '00000000-0000-0000-0000-000000000000' },
         update: {

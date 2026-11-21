@@ -277,6 +277,11 @@ inventoryRouter.post(
             where: { branchId_sku: { branchId: data.branchId, sku: data.sku } },
           });
 
+      if (existing && existing.branchId !== data.branchId) {
+        res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+        return;
+      }
+
       const product = await prisma.product.upsert({
         where: existing ? { id: existing.id } : { branchId_sku: { branchId: data.branchId, sku: data.sku } },
         update: {
@@ -388,6 +393,21 @@ inventoryRouter.put(
       const nextBuyPrice = body.buyPriceUsd !== undefined ? Number(body.buyPriceUsd) : Number(existing.buyPriceUsd);
       const nextSellPrice = body.sellPriceUsd !== undefined ? Number(body.sellPriceUsd) : Number(existing.sellPriceUsd);
       const nextReorderLevel = body.reorderLevel !== undefined ? Number(body.reorderLevel) : existing.reorderLevel;
+
+      if (
+        Number.isNaN(nextBuyPrice) ||
+        nextBuyPrice < 0 ||
+        Number.isNaN(nextSellPrice) ||
+        nextSellPrice <= 0 ||
+        Number.isNaN(nextReorderLevel) ||
+        nextReorderLevel < 0
+      ) {
+        res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: 'Buy price and reorder level must be non-negative, and sell price must be positive.',
+        });
+        return;
+      }
       const editReason = String(body.reason || '').trim();
 
       const changesSummary: string[] = [];
@@ -599,10 +619,15 @@ inventoryRouter.post(
       );
 
       const result = await prisma.$transaction(async (tx) => {
-        // Idempotency check if client retries same purchase UUID
+        // Branch-scoped idempotency check if client retries same purchase UUID
         if (data.id) {
           const existingPurchase = await tx.purchase.findUnique({ where: { id: data.id } });
-          if (existingPurchase) return existingPurchase;
+          if (existingPurchase) {
+            if (existingPurchase.branchId !== data.branchId) {
+              throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+            }
+            return existingPurchase;
+          }
         }
 
         let supplierId = data.supplierId;
@@ -725,7 +750,12 @@ inventoryRouter.post(
       });
 
       res.status(201).json({ purchase: result });
-    } catch (error) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+      if (msg === 'CROSS_BRANCH_ACCESS_DENIED') {
+        res.status(403).json({ error: msg });
+        return;
+      }
       console.error('[Inventory] Purchase stock-in error:', error);
       res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
     }
@@ -785,6 +815,14 @@ inventoryRouter.post(
       res.status(201).json(result);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+      if (msg === 'CROSS_BRANCH_ACCESS_DENIED') {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      if (msg === 'BATCH_NOT_FOUND_IN_BRANCH') {
+        res.status(404).json({ error: msg });
+        return;
+      }
       if (msg.startsWith('INSUFFICIENT_BATCH_STOCK')) {
         res.status(400).json({ error: 'INSUFFICIENT_BATCH_STOCK', details: msg });
         return;
@@ -824,8 +862,12 @@ inventoryRouter.post(
             entry.batchId
           );
 
-          const batch = await tx.productBatch.findUnique({
-            where: { id: entry.batchId },
+          const batch = await tx.productBatch.findFirst({
+            where: {
+              id: entry.batchId,
+              branchId: data.branchId,
+              deletedAt: null,
+            },
             include: { product: true },
           });
 

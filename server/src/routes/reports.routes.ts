@@ -591,6 +591,12 @@ reportsRouter.patch(
         return;
       }
 
+      const existingBranch = await prisma.branch.findUnique({ where: { id: branchId } });
+      if (!existingBranch || existingBranch.deletedAt) {
+        res.status(404).json({ error: 'BRANCH_NOT_FOUND' });
+        return;
+      }
+
       const {
         name,
         phone,
@@ -600,19 +606,45 @@ reportsRouter.patch(
         receiptHeader,
         receiptFooter,
         defaultLang,
-      } = req.body;
+      } = req.body || {};
+
+      if (exchangeRate !== undefined) {
+        const parsedRate = Number(exchangeRate);
+        if (Number.isNaN(parsedRate) || parsedRate <= 0 || parsedRate > 1_000_000) {
+          res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: 'exchangeRate must be a positive number between 1 and 1,000,000.',
+          });
+          return;
+        }
+      }
+
+      if (taxRate !== undefined) {
+        const parsedTax = Number(taxRate);
+        if (Number.isNaN(parsedTax) || parsedTax < 0 || parsedTax > 100) {
+          res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: 'taxRate must be between 0 and 100.',
+          });
+          return;
+        }
+      }
 
       const updated = await prisma.branch.update({
         where: { id: branchId },
         data: {
-          ...(name ? { name } : {}),
-          ...(phone !== undefined ? { phone } : {}),
-          ...(address !== undefined ? { address } : {}),
+          ...(name ? { name: String(name).trim().slice(0, 120) } : {}),
+          ...(phone !== undefined ? { phone: phone ? String(phone).trim().slice(0, 30) : null } : {}),
+          ...(address !== undefined ? { address: address ? String(address).trim().slice(0, 255) : null } : {}),
           ...(exchangeRate !== undefined ? { exchangeRate: Number(exchangeRate) } : {}),
           ...(taxRate !== undefined ? { taxRate: Number(taxRate) } : {}),
-          ...(receiptHeader !== undefined ? { receiptHeader } : {}),
-          ...(receiptFooter !== undefined ? { receiptFooter } : {}),
-          ...(defaultLang ? { defaultLang } : {}),
+          ...(receiptHeader !== undefined
+            ? { receiptHeader: receiptHeader ? String(receiptHeader).trim().slice(0, 200) : null }
+            : {}),
+          ...(receiptFooter !== undefined
+            ? { receiptFooter: receiptFooter ? String(receiptFooter).trim().slice(0, 200) : null }
+            : {}),
+          ...(defaultLang === 'en' || defaultLang === 'so' ? { defaultLang } : {}),
           version: { increment: 1 },
         },
       });
@@ -620,10 +652,21 @@ reportsRouter.patch(
       await recordAuditLog({
         branchId,
         userId: req.user!.id,
-        action: 'BRANCH_SETTINGS_UPDATE',
+        action:
+          exchangeRate !== undefined &&
+          Number(existingBranch.exchangeRate) !== Number(updated.exchangeRate)
+            ? 'EXCHANGE_RATE_CHANGE'
+            : 'BRANCH_SETTINGS_UPDATE',
         entityType: 'Branch',
         entityId: branchId,
-        newData: { exchangeRate: updated.exchangeRate, taxRate: updated.taxRate },
+        oldData: {
+          exchangeRate: Number(existingBranch.exchangeRate),
+          taxRate: Number(existingBranch.taxRate),
+        },
+        newData: {
+          exchangeRate: Number(updated.exchangeRate),
+          taxRate: Number(updated.taxRate),
+        },
         ipAddress: req.ip,
       });
 

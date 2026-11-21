@@ -15,7 +15,8 @@ quotationsRouter.use(authenticateJWT);
 
 /**
  * GET /api/quotations
- * Lists branch quotations (Qiimeyn) and marks expired ones
+ * Lists branch quotations (Qiimeyn) and marks expired ones.
+ * Enforces VET_OFFICER own-activity isolation.
  */
 quotationsRouter.get(
   '/',
@@ -24,7 +25,9 @@ quotationsRouter.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const quotations = await prisma.quotation.findMany({
-        where: scopedWhere(req),
+        where: scopedWhere(req, {
+          ...(req.user?.role === 'VET_OFFICER' ? { createdById: req.user.id } : {}),
+        }),
         include: {
           branch: { select: { id: true, code: true, name: true, location: true } },
           customer: true,
@@ -54,7 +57,7 @@ quotationsRouter.get(
 
 /**
  * POST /api/quotations
- * Create or edit a Quotation (Qiimeyn)
+ * Create a Quotation (Qiimeyn) with branch-scoped idempotency check
  */
 quotationsRouter.post(
   '/',
@@ -69,13 +72,29 @@ quotationsRouter.post(
       }
 
       const data = parsed.data;
+
+      if (data.id) {
+        const existing = await prisma.quotation.findUnique({ where: { id: data.id } });
+        if (existing) {
+          if (existing.branchId !== data.branchId) {
+            res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+            return;
+          }
+          res.status(200).json({ quotation: existing });
+          return;
+        }
+      }
+
       const subtotalUsd = Number(
         data.items
           .reduce((sum, i) => sum + i.quantity * i.unitPriceUsd, 0)
           .toFixed(2)
       );
       const lineDiscounts = data.items.reduce((sum, i) => sum + (i.discountUsd || 0), 0);
-      const totalDiscountUsd = Number((lineDiscounts + data.discountUsd).toFixed(2));
+      const totalDiscountUsd = Math.min(
+        subtotalUsd,
+        Number((lineDiscounts + data.discountUsd).toFixed(2))
+      );
       const totalUsd = Number(Math.max(0, subtotalUsd - totalDiscountUsd).toFixed(2));
       const totalSlsh = usdToSlsh(totalUsd, data.exchangeRateUsed);
 
@@ -108,7 +127,7 @@ quotationsRouter.post(
               unitPriceUsd: item.unitPriceUsd,
               discountUsd: item.discountUsd || 0,
               subtotalUsd: Number(
-                (item.quantity * item.unitPriceUsd - (item.discountUsd || 0)).toFixed(2)
+                Math.max(0, item.quantity * item.unitPriceUsd - (item.discountUsd || 0)).toFixed(2)
               ),
             })),
           },
@@ -128,7 +147,7 @@ quotationsRouter.post(
 
 /**
  * POST /api/quotations/:id/mark-converted
- * Marks a Quotation as CONVERTED and links convertedSaleId
+ * Marks a Quotation as CONVERTED and links convertedSaleId (strictly branch-scoped to prevent IDOR)
  */
 quotationsRouter.post(
   '/:id/mark-converted',
@@ -136,9 +155,21 @@ quotationsRouter.post(
   requirePermissions('quotations:manage'),
   async (req: Request, res: Response): Promise<void> => {
     try {
+      const existing = await prisma.quotation.findFirst({
+        where: scopedWhere(req, {
+          id: req.params.id,
+          ...(req.user?.role === 'VET_OFFICER' ? { createdById: req.user.id } : {}),
+        }),
+      });
+
+      if (!existing) {
+        res.status(404).json({ error: 'QUOTATION_NOT_FOUND' });
+        return;
+      }
+
       const { convertedSaleId } = req.body as { convertedSaleId?: string };
       const updated = await prisma.quotation.update({
-        where: { id: req.params.id },
+        where: { id: existing.id },
         data: {
           status: 'CONVERTED',
           convertedSaleId: convertedSaleId ?? null,

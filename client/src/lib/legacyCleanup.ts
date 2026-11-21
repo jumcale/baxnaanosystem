@@ -1,13 +1,12 @@
 /**
- * Legacy Offline Purge Utility
- * Runs once upon application initialization in main.tsx.
- * Deletes all legacy Dexie/IndexedDB databases and sync queue items
- * so client devices operate strictly online with zero stale local cache.
+ * Client Storage Purge Utility
+ * Runs on startup and logout to guarantee zero tokens, user PII, or business data
+ * are ever stored in IndexedDB, localStorage, or sessionStorage.
  */
 export async function purgeLegacyOfflineStorage(): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  // 1. Delete legacy IndexedDB databases
+  // 1. Delete any legacy IndexedDB databases
   const databasesToPurge = [
     'BaxnaanoERP_DB',
     'BaxnaanoOfflineDB',
@@ -24,8 +23,8 @@ export async function purgeLegacyOfflineStorage(): Promise<void> {
     }
   }
 
-  // 2. Remove legacy offline queue and cached data keys from localStorage
-  const legacyKeys = [
+  // 2. Remove any tokens, user profiles, or cached business data from localStorage & sessionStorage
+  const forbiddenKeys = [
     'baxnaano_sync_queue',
     'baxnaano_offline_sales',
     'baxnaano_offline_inventory',
@@ -36,14 +35,28 @@ export async function purgeLegacyOfflineStorage(): Promise<void> {
     'baxnaano_offline_session',
     'baxnaano_access_token',
     'baxnaano_auth_user',
+    'baxnaano_session_user',
+    'baxnaano_session_token',
   ];
 
-  for (const key of legacyKeys) {
+  for (const key of forbiddenKeys) {
     try {
       localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
     } catch {
       // ignore
     }
   }
-}
 
+  // Also purge any cached dashboard snapshots
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('baxnaano_dashboard_cache_')) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // ignore
+  }
+}

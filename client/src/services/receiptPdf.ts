@@ -346,46 +346,43 @@ export function printThermalReceiptElement(elementId = 'baxnaano-thermal-receipt
     return;
   }
 
+  // Safely construct the print document using DOM APIs and strip any executable elements/attributes (XSS prevention)
   doc.open();
-  doc.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Receipt</title>
-        <style>
-          @page {
-            margin: 0;
-            size: auto;
-          }
-          html, body {
-            margin: 0 !important;
-            padding: 4px !important;
-            font-family: monospace, Courier, sans-serif !important;
-            background: #fff !important;
-            color: #000 !important;
-          }
-          * {
-            box-sizing: border-box;
-          }
-          img {
-            max-width: 100%;
-            height: auto;
-          }
-          #${elementId} {
-            width: 100% !important;
-            max-width: 300px !important;
-            margin: 0 auto !important;
-            border: none !important;
-            box-shadow: none !important;
-          }
-        </style>
-      </head>
-      <body>
-        ${receiptEl.outerHTML}
-      </body>
-    </html>
-  `);
+  doc.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt</title></head><body></body></html>');
   doc.close();
+
+  const styleEl = doc.createElement('style');
+  styleEl.textContent = `
+    @page { margin: 0; size: auto; }
+    html, body {
+      margin: 0 !important;
+      padding: 4px !important;
+      font-family: monospace, Courier, sans-serif !important;
+      background: #fff !important;
+      color: #000 !important;
+    }
+    * { box-sizing: border-box; }
+    img { max-width: 100%; height: auto; }
+    #${elementId} {
+      width: 100% !important;
+      max-width: 300px !important;
+      margin: 0 auto !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
+  `;
+  doc.head.appendChild(styleEl);
+
+  const safeClone = receiptEl.cloneNode(true) as HTMLElement;
+  safeClone.querySelectorAll('script, iframe, object, embed').forEach((el) => el.remove());
+  safeClone.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.toLowerCase().startsWith('on') || attr.value.toLowerCase().includes('javascript:')) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  doc.body.appendChild(safeClone);
 
   setTimeout(() => {
     try {

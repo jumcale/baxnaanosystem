@@ -7,7 +7,7 @@
     "predev": "npm run ensure-prisma",
     "dev": "tsx watch src/index.ts",
     "prebuild": "npm run ensure-prisma",
-    "build": "tsc",
+    "build": "tsc && npx esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.cjs --external:@prisma/client --external:bcryptjs",
     "start": "tsx src/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "node scripts/prisma.cjs migrate dev",

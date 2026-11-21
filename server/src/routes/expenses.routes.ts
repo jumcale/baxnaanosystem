@@ -5,6 +5,7 @@ import {
   authenticateJWT,
   enforceBranchScope,
   requirePermissions,
+  requireRoles,
   scopedWhere,
 } from '../middleware/auth';
 import {
@@ -29,7 +30,8 @@ function computeNextRecurringDueDate(fromDate: Date, frequency?: string | null):
 
 /**
  * GET /api/expenses
- * Lists branch expenses with filters by approvalStatus, category, recurring, and date range
+ * Lists branch expenses with filters by approvalStatus, category, recurring, and date range.
+ * Enforces VET_OFFICER own-activity isolation.
  */
 expensesRouter.get(
   '/',
@@ -43,6 +45,7 @@ expensesRouter.get(
       >;
 
       const where = scopedWhere(req, {
+        ...(req.user?.role === 'VET_OFFICER' ? { createdById: req.user.id } : {}),
         ...(category ? { category } : {}),
         ...(approvalStatus ? { approvalStatus: approvalStatus as ApprovalStatus } : {}),
         ...(isRecurring !== undefined ? { isRecurring: isRecurring === 'true' } : {}),
@@ -76,8 +79,7 @@ expensesRouter.get(
 
 /**
  * POST /api/expenses
- * Creates an expense (with optional offline receipt photo base64 & recurring schedule).
- * Auto-approves if created by ADMIN or BRANCH_MANAGER; otherwise sets PENDING for manager approval.
+ * Creates or updates an expense with strict branch-scoped IDOR protection and AuditLog.
  */
 expensesRouter.post(
   '/',
@@ -92,6 +94,23 @@ expensesRouter.post(
       }
 
       const data = parsed.data;
+
+      if (data.id) {
+        const existing = await prisma.expense.findUnique({ where: { id: data.id } });
+        if (existing && existing.branchId !== data.branchId) {
+          res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+          return;
+        }
+        if (
+          existing &&
+          req.user!.role === 'VET_OFFICER' &&
+          existing.createdById !== req.user!.id
+        ) {
+          res.status(403).json({ error: 'FORBIDDEN_OWNERSHIP' });
+          return;
+        }
+      }
+
       const amountUsd = normalizePaymentToUsd(
         data.amountOriginal,
         data.currencyPaid,
@@ -141,6 +160,21 @@ expensesRouter.post(
           expenseDate: expDate,
           createdById: req.user!.id,
         },
+      });
+
+      await recordAuditLog({
+        branchId: expense.branchId,
+        userId: req.user!.id,
+        action: 'EXPENSE_CREATE',
+        entityType: 'Expense',
+        entityId: expense.id,
+        newData: {
+          category: expense.category,
+          payee: expense.payee,
+          amountUsd: Number(expense.amountUsd),
+          approvalStatus: expense.approvalStatus,
+        },
+        ipAddress: req.ip,
       });
 
       res.status(201).json({ expense });
@@ -211,16 +245,9 @@ expensesRouter.post(
  */
 expensesRouter.delete(
   '/:id',
+  requireRoles('ADMIN'),
   async (req: Request, res: Response): Promise<void> => {
     try {
-      if (!req.user || req.user.role !== 'ADMIN') {
-        res.status(403).json({
-          error: 'FORBIDDEN',
-          message: 'Only Admin can delete or remove recorded expenses.',
-        });
-        return;
-      }
-
       const existing = await prisma.expense.findUnique({
         where: { id: req.params.id },
       });
@@ -236,7 +263,7 @@ expensesRouter.delete(
 
       await recordAuditLog({
         branchId: existing.branchId,
-        userId: req.user.id,
+        userId: req.user!.id,
         action: 'EXPENSE_DELETED',
         entityType: 'Expense',
         entityId: existing.id,

@@ -2,15 +2,19 @@ import { Request, Response, NextFunction } from 'express';
 
 const SENSITIVE_KEYS = new Set([
   'password',
+  'passwordhash',
+  'pinhash',
   'currentpassword',
   'newpassword',
   'token',
+  'tokenhash',
   'refreshtoken',
   'accesstoken',
   'secret',
   'authorization',
   'cookie',
   'set-cookie',
+  'receiptphotodata',
 ]);
 
 export function redactSensitiveData(obj: any): any {
@@ -19,7 +23,13 @@ export function redactSensitiveData(obj: any): any {
 
   const clean: Record<string, any> = {};
   for (const [key, val] of Object.entries(obj)) {
-    if (SENSITIVE_KEYS.has(key.toLowerCase()) || key.toLowerCase().includes('password')) {
+    const lower = key.toLowerCase();
+    if (
+      SENSITIVE_KEYS.has(lower) ||
+      lower.includes('password') ||
+      lower.includes('secret') ||
+      lower.includes('token')
+    ) {
       clean[key] = '[REDACTED]';
     } else if (typeof val === 'object' && val !== null) {
       clean[key] = redactSensitiveData(val);
@@ -44,6 +54,8 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
       path: req.path,
       statusCode: res.statusCode,
       durationMs,
+      userId: req.user?.id ?? null,
+      branchId: req.user?.branchId ?? null,
       ip: req.ip || req.socket.remoteAddress,
       query: redactSensitiveData(req.query),
     };
@@ -53,4 +65,3 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
 
   next();
 }
-

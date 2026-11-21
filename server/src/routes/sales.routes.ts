@@ -19,6 +19,7 @@ import {
   normalizePaymentToUsd,
   usdToSlsh,
   classifyExpiryBucket,
+  hasPermission,
 } from '@baxnaano/shared';
 import {
   appendStockMovement,
@@ -34,12 +35,11 @@ salesRouter.use(authenticateJWT);
 /**
  * POST /api/sales
  * Atomic POS Checkout:
- * 1. Idempotent by sale UUID (`id`) for safe network retry and duplicate submit prevention.
- * 2. Allocates stock using FEFO (First Expiry, First Out) or verifies explicit non-expired batch.
- * 3. Blocks expired batches strictly.
- * 4. Appends negative `SALE` StockMovement entries to the ledger.
- * 5. Records split payments (Cash, EVC Plus, Zaad, eDahab, Credit) in USD or SLSH.
- * 6. If Credit payment is present, verifies customer & credit limit and appends a `CHARGE` to CreditLedger.
+ * 1. Branch-scoped idempotency by sale UUID (`id`) preventing cross-branch replay or double-submit.
+ * 2. Uses authoritative server-side Product/Batch prices and Branch exchangeRate.
+ * 3. Acquires row locks (`FOR UPDATE`) on batches and allocates stock using FEFO.
+ * 4. Strictly blocks expired batches.
+ * 5. Enforces discount approval governance and customer credit limits.
  */
 salesRouter.post(
   '/',
@@ -56,27 +56,39 @@ salesRouter.post(
       const data = parsed.data;
 
       const result = await prisma.$transaction(async (tx) => {
-        // 1. Idempotency check (if client retries same sale UUID across network disconnects)
+        // 1. Branch-scoped Idempotency check
         if (data.id) {
           const existingSale = await tx.sale.findUnique({
             where: { id: data.id },
             include: { items: true, payments: true, customer: true },
           });
           if (existingSale) {
+            if (existingSale.branchId !== data.branchId) {
+              throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+            }
             return { sale: existingSale, idempotentReplay: true };
           }
         }
 
-        // 2. Resolve Branch & Receipt Number
+        // 2. Resolve Branch & Authoritative Exchange Rate
         const branch = await tx.branch.findUnique({ where: { id: data.branchId } });
-        const branchCode = branch?.code || 'BX';
+        if (!branch || branch.deletedAt) {
+          throw new Error('BRANCH_NOT_FOUND');
+        }
+        const branchCode = branch.code || 'BX';
+        // Use authoritative branch exchange rate unless ADMIN explicitly overrides within valid bounds
+        const authoritativeExchangeRate =
+          req.user!.role === 'ADMIN' && data.exchangeRateUsed > 0
+            ? data.exchangeRateUsed
+            : Number(branch.exchangeRate) || data.exchangeRateUsed;
+
         const receiptNumber =
           data.receiptNumber ||
           `${branchCode}-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(
             1000 + Math.random() * 9000
           )}`;
 
-        // 3. Allocate FEFO Batches & Build SaleLineItems
+        // 3. Allocate FEFO Batches & Compute Server-Side Totals
         const resolvedSaleItems: Array<{
           productId: string;
           batchId: string;
@@ -94,9 +106,9 @@ salesRouter.post(
         for (const reqItem of data.items) {
           const lineDiscountUsd = Number(reqItem.discountUsd || 0);
 
-          // Ensure Product exists on server
+          // Verify Product exists and belongs strictly to this branch
           let product = await tx.product.findFirst({
-            where: { id: reqItem.productId, deletedAt: null },
+            where: { id: reqItem.productId, branchId: data.branchId, deletedAt: null },
           });
           if (!product && reqItem.sku) {
             product = await tx.product.findFirst({
@@ -104,42 +116,20 @@ salesRouter.post(
             });
           }
           if (!product) {
-            const category = await tx.category.upsert({
-              where: { branchId_name: { branchId: data.branchId, name: 'General Medicines' } },
-              update: {},
-              create: { branchId: data.branchId, name: 'General Medicines', nameSo: 'Daawooyinka Guud' },
-            });
-            const unit = await tx.unit.upsert({
-              where: { branchId_name: { branchId: data.branchId, name: 'Unit' } },
-              update: {},
-              create: { branchId: data.branchId, name: 'Unit', abbreviation: 'pcs' },
-            });
-            const fallbackSku = reqItem.sku || `SKU-${reqItem.productId.slice(0, 8).toUpperCase()}`;
-            product = await tx.product.upsert({
-              where: { branchId_sku: { branchId: data.branchId, sku: fallbackSku } },
-              update: {},
-              create: {
-                id: reqItem.productId,
-                branchId: data.branchId,
-                categoryId: category.id,
-                unitId: unit.id,
-                sku: fallbackSku,
-                name: reqItem.productName || fallbackSku,
-                buyPriceUsd: reqItem.unitBuyPriceUsd ?? Number((reqItem.unitPriceUsd * 0.65).toFixed(2)),
-                sellPriceUsd: reqItem.unitPriceUsd,
-                reorderLevel: 10,
-              },
-            });
+            throw new Error(`PRODUCT_NOT_FOUND:${reqItem.productId}`);
           }
 
           const effectiveProductId = product.id;
 
           if (reqItem.batchId) {
-            // Explicit batch provided (e.g. chosen or allocated)
+            // Lock specific batch row for update
+            await tx.$queryRaw`SELECT id FROM "ProductBatch" WHERE id = ${reqItem.batchId} AND "branchId" = ${data.branchId} FOR UPDATE`;
+
             let batch = await tx.productBatch.findFirst({
               where: {
                 id: reqItem.batchId,
                 branchId: data.branchId,
+                productId: effectiveProductId,
                 deletedAt: null,
               },
             });
@@ -175,10 +165,18 @@ salesRouter.post(
               );
             }
 
-            const lineTotal = Number(
-              (reqItem.quantity * reqItem.unitPriceUsd - lineDiscountUsd).toFixed(2)
-            );
-            subtotalUsd += reqItem.quantity * reqItem.unitPriceUsd;
+            // Use authoritative sellPriceUsd from database (prevent client price tampering below sell price)
+            const authoritativeUnitPrice = Number(batch.sellPriceUsd) || Number(product.sellPriceUsd);
+            const effectiveUnitPrice =
+              reqItem.unitPriceUsd >= authoritativeUnitPrice ||
+              hasPermission(req.user!.role, 'sales:approve_discount')
+                ? reqItem.unitPriceUsd
+                : authoritativeUnitPrice;
+
+            const grossLine = Number((reqItem.quantity * effectiveUnitPrice).toFixed(2));
+            const cappedLineDiscount = Math.min(grossLine, Math.max(0, lineDiscountUsd));
+            const lineTotal = Number((grossLine - cappedLineDiscount).toFixed(2));
+            subtotalUsd += grossLine;
 
             resolvedSaleItems.push({
               productId: effectiveProductId,
@@ -186,13 +184,13 @@ salesRouter.post(
               batchNumber: batch.batchNumber,
               quantity: reqItem.quantity,
               unitBuyPriceUsd: Number(batch.buyPriceUsd),
-              unitPriceUsd: reqItem.unitPriceUsd,
-              discountUsd: lineDiscountUsd,
+              unitPriceUsd: effectiveUnitPrice,
+              discountUsd: cappedLineDiscount,
               subtotalUsd: lineTotal,
               dosageNote: reqItem.dosageNote ?? null,
             });
           } else {
-            // Auto FEFO allocation across one or more non-expired batches
+            // Auto FEFO allocation across one or more non-expired batches (locks rows inside getProductFEFOAllocation)
             const fefo = await getProductFEFOAllocation(
               tx,
               data.branchId,
@@ -209,7 +207,6 @@ salesRouter.post(
               throw new Error(`INSUFFICIENT_FEFO_STOCK:shortfall=${fefo.shortfallQuantity}`);
             }
 
-            // Distribute line discount proportionally if split across multiple batches
             let remainingDiscount = lineDiscountUsd;
             fefo.allocations.forEach((alloc, idx) => {
               const isLast = idx === fefo.allocations.length - 1;
@@ -220,10 +217,17 @@ salesRouter.post(
                   );
               remainingDiscount = Number((remainingDiscount - allocDiscount).toFixed(2));
 
-              const lineTotal = Number(
-                (alloc.allocatedQuantity * reqItem.unitPriceUsd - allocDiscount).toFixed(2)
-              );
-              subtotalUsd += alloc.allocatedQuantity * reqItem.unitPriceUsd;
+              const authoritativeUnitPrice = alloc.unitSellPriceUsd || Number(product!.sellPriceUsd);
+              const effectiveUnitPrice =
+                reqItem.unitPriceUsd >= authoritativeUnitPrice ||
+                hasPermission(req.user!.role, 'sales:approve_discount')
+                  ? reqItem.unitPriceUsd
+                  : authoritativeUnitPrice;
+
+              const grossLine = Number((alloc.allocatedQuantity * effectiveUnitPrice).toFixed(2));
+              const cappedAllocDiscount = Math.min(grossLine, Math.max(0, allocDiscount));
+              const lineTotal = Number((grossLine - cappedAllocDiscount).toFixed(2));
+              subtotalUsd += grossLine;
 
               resolvedSaleItems.push({
                 productId: effectiveProductId,
@@ -231,8 +235,8 @@ salesRouter.post(
                 batchNumber: alloc.batchNumber,
                 quantity: alloc.allocatedQuantity,
                 unitBuyPriceUsd: alloc.unitBuyPriceUsd,
-                unitPriceUsd: reqItem.unitPriceUsd,
-                discountUsd: allocDiscount,
+                unitPriceUsd: effectiveUnitPrice,
+                discountUsd: cappedAllocDiscount,
                 subtotalUsd: lineTotal,
                 dosageNote: reqItem.dosageNote ?? null,
               });
@@ -242,11 +246,13 @@ salesRouter.post(
 
         subtotalUsd = Number(subtotalUsd.toFixed(2));
         const totalLineDiscounts = resolvedSaleItems.reduce((s, i) => s + i.discountUsd, 0);
-        const totalDiscountUsd = Number((totalLineDiscounts + data.discountUsd).toFixed(2));
+        const rawTotalDiscountUsd = Number((totalLineDiscounts + data.discountUsd).toFixed(2));
+        const totalDiscountUsd = Math.min(subtotalUsd, Math.max(0, rawTotalDiscountUsd));
+
         const totalUsd = Number(
           Math.max(0, subtotalUsd - totalDiscountUsd + data.taxUsd).toFixed(2)
         );
-        const totalSlsh = usdToSlsh(totalUsd, data.exchangeRateUsed);
+        const totalSlsh = usdToSlsh(totalUsd, authoritativeExchangeRate);
 
         // 4. Normalize Split Payments (Cash, EVC Plus, Zaad, eDahab, Credit)
         let paidUsd = 0;
@@ -256,7 +262,7 @@ salesRouter.post(
           const amountUsd = normalizePaymentToUsd(
             p.amountOriginal,
             p.currency,
-            data.exchangeRateUsed
+            authoritativeExchangeRate
           );
           if (p.method === 'CREDIT') {
             creditAmountUsd = Number((creditAmountUsd + amountUsd).toFixed(2));
@@ -269,7 +275,7 @@ salesRouter.post(
             currency: p.currency as Currency,
             amountOriginal: p.amountOriginal,
             amountUsd,
-            exchangeRateUsed: data.exchangeRateUsed,
+            exchangeRateUsed: authoritativeExchangeRate,
             referencePhone: p.referencePhone ?? null,
             transactionRef: p.transactionRef ?? null,
           };
@@ -284,47 +290,28 @@ salesRouter.post(
 
         const changeUsd = Number(Math.max(0, paidUsd - (totalUsd - creditAmountUsd)).toFixed(2));
 
-        // 5. Ensure Customer Exists & Validate Credit Limit if Credit Payment is used
+        // 5. Verify Customer Branch Ownership & Credit Limit if Credit Payment is used
         let resolvedCustomerId: string | null = data.customerId ?? null;
         if (resolvedCustomerId) {
-          let customer = await tx.customer.findFirst({
+          const customer = await tx.customer.findFirst({
             where: { id: resolvedCustomerId, deletedAt: null },
           });
-          if (!customer && data.customerName) {
-            customer = await tx.customer.create({
-              data: {
-                id: resolvedCustomerId,
-                branchId: data.branchId,
-                name: data.customerName,
-                phone: data.customerPhone || '+252630000000',
-                creditLimitUsd: Math.max(500, creditAmountUsd * 2),
-                currentBalanceUsd: 0,
-              },
-            });
-          }
+
           if (!customer) {
-            if (creditAmountUsd > 0) {
-              customer = await tx.customer.create({
-                data: {
-                  id: resolvedCustomerId,
-                  branchId: data.branchId,
-                  name: data.customerName || 'Credit Customer',
-                  phone: data.customerPhone || '+252630000000',
-                  creditLimitUsd: Math.max(500, creditAmountUsd * 2),
-                  currentBalanceUsd: 0,
-                },
-              });
-            } else {
-              resolvedCustomerId = null;
-            }
-          } else if (creditAmountUsd > 0) {
+            throw new Error('CUSTOMER_NOT_FOUND');
+          }
+
+          if (customer.branchId !== data.branchId) {
+            throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+          }
+
+          if (creditAmountUsd > 0) {
             const newBalance = Number(customer.currentBalanceUsd) + creditAmountUsd;
             if (
               newBalance > Number(customer.creditLimitUsd) &&
               !data.approvedById &&
               req.user!.role !== 'ADMIN' &&
-              req.user!.role !== 'BRANCH_MANAGER' &&
-              req.user!.role !== 'VET_OFFICER'
+              req.user!.role !== 'BRANCH_MANAGER'
             ) {
               throw new Error(
                 `CREDIT_LIMIT_EXCEEDED:limit=${customer.creditLimitUsd}:newBalance=${newBalance.toFixed(
@@ -347,7 +334,7 @@ salesRouter.post(
             customerId: resolvedCustomerId,
             status: 'COMPLETED',
             currency: data.currency as Currency,
-            exchangeRateUsed: data.exchangeRateUsed,
+            exchangeRateUsed: authoritativeExchangeRate,
             subtotalUsd,
             discountUsd: totalDiscountUsd,
             taxUsd: data.taxUsd,
@@ -416,9 +403,9 @@ salesRouter.post(
         }
 
         // 8. Append Credit Ledger Entry if creditAmountUsd > 0
-        if (creditAmountUsd > 0 && data.customerId) {
+        if (creditAmountUsd > 0 && resolvedCustomerId) {
           const updatedCustomer = await tx.customer.update({
-            where: { id: data.customerId },
+            where: { id: resolvedCustomerId },
             data: {
               currentBalanceUsd: { increment: creditAmountUsd },
               version: { increment: 1 },
@@ -429,7 +416,7 @@ salesRouter.post(
           await tx.creditLedger.create({
             data: {
               branchId: data.branchId,
-              customerId: data.customerId,
+              customerId: resolvedCustomerId,
               saleId: sale.id,
               type: CreditTransactionType.CHARGE,
               amountDeltaUsd: creditAmountUsd,
@@ -444,7 +431,7 @@ salesRouter.post(
         return { sale, idempotentReplay: false };
       });
 
-      if (data.discountUsd > 0) {
+      if (Number(result.sale.discountUsd) > 0 && !result.idempotentReplay) {
         await recordAuditLog({
           branchId: data.branchId,
           userId: req.user!.id,
@@ -463,6 +450,14 @@ salesRouter.post(
       res.status(201).json(result);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'UNKNOWN_SALE_ERROR';
+      if (msg === 'CROSS_BRANCH_ACCESS_DENIED') {
+        res.status(403).json({ error: msg });
+        return;
+      }
+      if (msg.startsWith('PRODUCT_NOT_FOUND') || msg.startsWith('BATCH_NOT_FOUND')) {
+        res.status(404).json({ error: msg.split(':')[0], details: msg });
+        return;
+      }
       if (
         msg.startsWith('EXPIRED_BATCH') ||
         msg.startsWith('INSUFFICIENT_') ||
@@ -480,7 +475,8 @@ salesRouter.post(
 
 /**
  * GET /api/sales/:id/receipt
- * Fetches full receipt data for 58mm / 80mm thermal or PDF rendering
+ * Fetches full receipt data for 58mm / 80mm thermal or PDF rendering.
+ * Enforces branch scope and VET_OFFICER own-activity isolation.
  */
 salesRouter.get(
   '/:id/receipt',
@@ -489,7 +485,10 @@ salesRouter.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const sale = await prisma.sale.findFirst({
-        where: scopedWhere(req, { id: req.params.id }),
+        where: scopedWhere(req, {
+          id: req.params.id,
+          ...(req.user?.role === 'VET_OFFICER' ? { cashierId: req.user.id } : {}),
+        }),
         include: {
           branch: true,
           cashier: { select: { id: true, fullName: true, username: true } },
@@ -520,7 +519,8 @@ salesRouter.get(
 /**
  * GET /api/sales
  * Sales History (Taariikhda Iibka):
- * Filter by date range, cashierId, paymentMethod, customerId, status, or receiptNumber
+ * Filter by date range, cashierId, paymentMethod, customerId, status, or receiptNumber.
+ * Enforces VET_OFFICER own-activity isolation.
  */
 salesRouter.get(
   '/',
@@ -545,8 +545,12 @@ salesRouter.get(
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
       const skip = (page - 1) * limit;
 
+      // VET_OFFICER is locked strictly to their own sales activity
+      const enforcedCashierId =
+        req.user?.role === 'VET_OFFICER' ? req.user.id : cashierId;
+
       const where = scopedWhere(req, {
-        ...(cashierId ? { cashierId } : {}),
+        ...(enforcedCashierId ? { cashierId: enforcedCashierId } : {}),
         ...(customerId ? { customerId } : {}),
         ...(status ? { status: status as 'COMPLETED' | 'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED' } : {}),
         ...(effectiveFrom || effectiveTo
@@ -610,10 +614,6 @@ salesRouter.get(
 
 /**
  * POST /api/sales/:id/void
- * Voids an entire sale with mandatory reason & approval:
- * 1. Reverses stock by appending positive `VOID_REVERSAL` StockMovement entries to each batch.
- * 2. If sale had a credit balance, reverses the customer's debt and appends a `VOID_REVERSAL` CreditLedger entry.
- * 3. Writes an AuditLog (`SALE_VOID`).
  */
 salesRouter.post(
   '/:id/void',
@@ -640,10 +640,9 @@ salesRouter.post(
           throw new Error('SALE_NOT_FOUND');
         }
         if (sale.status === 'VOIDED') {
-          return sale; // Idempotent
+          return sale;
         }
 
-        // 1. Return remaining non-refunded quantities back to each batch via ledger
         for (const item of sale.items) {
           const netSoldQty = item.quantity - item.refundedQuantity;
           if (netSoldQty > 0) {
@@ -662,7 +661,6 @@ salesRouter.post(
           }
         }
 
-        // 2. Reverse customer credit charge if creditAmountUsd > 0
         if (Number(sale.creditAmountUsd) > 0 && sale.customerId) {
           const customer = await tx.customer.update({
             where: { id: sale.customerId },
@@ -726,8 +724,6 @@ salesRouter.post(
 
 /**
  * POST /api/sales/:id/refund
- * Full or partial item refund with mandatory reason & approval:
- * Appends `REFUND_RETURN` positive StockMovement entries and updates sale status.
  */
 salesRouter.post(
   '/:id/refund',
@@ -807,7 +803,7 @@ salesRouter.post(
         action: 'SALE_REFUND',
         entityType: 'Sale',
         entityId: updatedSale.id,
-        newData: { status: updatedSale.status, items },
+        newData: { receiptNumber: updatedSale.receiptNumber, status: updatedSale.status, items },
         reason,
         ipAddress: req.ip,
       });
@@ -815,8 +811,11 @@ salesRouter.post(
       res.json({ sale: updatedSale });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'REFUND_ERROR';
-      if (msg.startsWith('SALE_') || msg.startsWith('REFUND_')) {
-        res.status(400).json({ error: msg });
+      if (
+        msg.startsWith('SALE_') ||
+        msg.startsWith('REFUND_QTY_EXCEEDS_SOLD')
+      ) {
+        res.status(400).json({ error: msg.split(':')[0], details: msg });
         return;
       }
       console.error('[Sales] Refund error:', error);
@@ -824,4 +823,3 @@ salesRouter.post(
     }
   }
 );
-

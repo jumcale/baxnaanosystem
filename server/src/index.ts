@@ -17,24 +17,58 @@ import { expensesRouter } from './routes/expenses.routes';
 import { quotationsRouter } from './routes/quotations.routes';
 import { appointmentsRouter } from './routes/appointments.routes';
 import { reportsRouter } from './routes/reports.routes';
-import { prisma, warmDatabaseConnection, getDbConnectionState } from './config/db';
+import { prisma, warmDatabaseConnection } from './config/db';
 import { startMidnightRolloverScheduler } from './services/rollover.service';
 
 export const app = express();
 
-// 1. Ultra-Fast Zero-DB Health Endpoint for Render Load Balancer & Keep-Alive Monitors (<1ms)
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'ok',
-    service: 'Baxnaano Pharmacy & Veterinary System',
-    databaseCachedState: getDbConnectionState() ? 'connected' : 'warming',
-    uptimeSeconds: Math.round(process.uptime()),
-    timezone: 'Africa/Mogadishu',
-    timestamp: new Date().toISOString(),
-  });
+// Trust first reverse proxy hop (Render / Railway load balancer) so req.ip and req.secure are accurate
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+// 1. Security & Hardening Middleware (Helmet with Strict Content-Security-Policy on ALL routes)
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        fontSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        workerSrc: ["'self'", 'blob:'],
+        manifestSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  })
+);
+
+// 2. HTTPS Enforcement behind Render / Reverse Proxy in Production
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (
+    env.NODE_ENV === 'production' &&
+    req.headers['x-forwarded-proto'] &&
+    req.headers['x-forwarded-proto'] !== 'https'
+  ) {
+    res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+    return;
+  }
+  next();
 });
 
-// 2. Built-in Gzip / Brotli HTTP Compression Middleware for JSON APIs & Static JS/CSS Bundles
+// 3. Ultra-Fast Unauthenticated Health Endpoint for Render / Docker / Railway (<1ms, zero sensitive info)
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// 4. Built-in Gzip / Brotli HTTP Compression Middleware for JSON APIs & Static JS/CSS Bundles
 app.use((req: Request, res: Response, next: NextFunction) => {
   const acceptEncoding = String(req.headers['accept-encoding'] || '');
   if (!acceptEncoding || req.method === 'HEAD') {
@@ -65,7 +99,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         ? Buffer.from(body, 'utf-8')
         : Buffer.from(JSON.stringify(body), 'utf-8');
 
-    // Only compress payloads larger than 1 KB
     if (buffer.byteLength < 1024) {
       return origSend(body);
     }
@@ -96,33 +129,40 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// 3. Security & Hardening Middleware
-app.use(
-  helmet({
-    contentSecurityPolicy: false,
-  })
-);
-
-const allowedOrigins =
-  env.CORS_ORIGIN === '*'
-    ? true
-    : env.CORS_ORIGIN.split(',').map((o) => o.trim());
+// 5. Strict CORS Allowlist (Never wildcard '*' with credentials in production)
+const configuredOrigins = env.CORS_ORIGIN.split(',')
+  .map((o) => o.trim())
+  .filter((o) => o && o !== '*');
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow same-origin requests (no Origin header) or configured allowed origins
+      if (!origin || configuredOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      if (env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:')) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('CORS_ORIGIN_NOT_ALLOWED'));
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-branch-id', 'X-Requested-With'],
   })
 );
+
 app.use(cookieParser());
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '512kb' }));
 app.use(requestLogger);
 
-// 4. Rate Limiting (Excludes /health and /api/health so keep-alive pings never trip rate limits)
+// 6. Rate Limiting on All API Routes
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 800,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path === '/health' || req.path === '/api/health',
@@ -130,7 +170,7 @@ const apiLimiter = rateLimit({
 });
 app.use('/api', apiLimiter);
 
-// 5. API & Database Health Check (With fast 3-second timeout guard so it never hangs)
+// 7. API & Database Connectivity Check (Minimal non-sensitive output, 3s timeout guard)
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
     await Promise.race([
@@ -142,22 +182,17 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     res.json({
       status: 'ok',
       database: 'connected',
-      service: 'Baxnaano Pharmacy & Veterinary API',
-      timezone: 'Africa/Mogadishu',
-      uptimeSeconds: Math.round(process.uptime()),
-      timestamp: new Date().toISOString(),
     });
   } catch {
     res.status(503).json({
       status: 'degraded',
       database: 'disconnected',
       error: 'DATABASE_UNAVAILABLE',
-      timestamp: new Date().toISOString(),
     });
   }
 });
 
-// 6. Core Business Routes
+// 8. Core Business Routes
 app.use('/api/auth', authRouter);
 app.use('/api/branches', branchesRouter);
 app.use('/api/inventory', inventoryRouter);
@@ -168,7 +203,7 @@ app.use('/api/quotations', quotationsRouter);
 app.use('/api/appointments', appointmentsRouter);
 app.use('/api/reports', reportsRouter);
 
-// 7. Serve Built React Vite PWA (`client/dist`) with Immutable Asset Caching & Compression
+// 9. Serve Built React Vite PWA (`client/dist`) with Security & Cache Headers
 const clientDistCandidates = [
   path.resolve(process.cwd(), 'client/dist'),
   path.resolve(process.cwd(), '../client/dist'),
@@ -178,19 +213,21 @@ const clientDistPath = clientDistCandidates.find((p) =>
 );
 
 if (clientDistPath) {
-  // Hashed Vite assets (/assets/*) cached immutable for 1 year
   app.use(
     '/assets',
     express.static(path.join(clientDistPath, 'assets'), {
       maxAge: '365d',
       immutable: true,
+      setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+      },
     })
   );
 
-  // Root static files (manifest, sw.js, icons, index.html) served with instant validation
   app.use(
     express.static(clientDistPath, {
       setHeaders: (res, filePath) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
         if (
           filePath.endsWith('index.html') ||
           filePath.endsWith('sw.js') ||
@@ -210,21 +247,28 @@ if (clientDistPath) {
       return;
     }
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
 
-// 8. Global Error Handler
+// 10. Global Error Handler (Never leaks stack traces or internal details to client)
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Server Error]:', err);
+  if (err.message === 'CORS_ORIGIN_NOT_ALLOWED') {
+    res.status(403).json({
+      error: 'CORS_ORIGIN_NOT_ALLOWED',
+      message: 'Origin is not permitted by CORS policy.',
+    });
+    return;
+  }
+  console.error('[Server Error]:', err.message);
   res.status(500).json({
     error: 'INTERNAL_SERVER_ERROR',
     messageKey: 'common.errors.server_error',
   });
 });
 
-// 9. Optional Self Keep-Alive Ping for Render Free Tier
-function startRenderKeepAlivePing(port: number): void {
+function startRenderKeepAlivePing(): void {
   const targetUrl =
     process.env.RENDER_EXTERNAL_URL ||
     process.env.KEEP_ALIVE_URL ||
@@ -233,7 +277,6 @@ function startRenderKeepAlivePing(port: number): void {
   if (!targetUrl) return;
 
   const healthUrl = `${targetUrl.replace(/\/$/, '')}/health`;
-  // Ping every 10 minutes (Render Free Tier sleeps after 15 minutes of inactivity)
   setInterval(async () => {
     try {
       const controller = new AbortController();
@@ -244,8 +287,6 @@ function startRenderKeepAlivePing(port: number): void {
       // Ignore transient ping errors
     }
   }, 10 * 60 * 1000);
-
-  console.log(`[Keep-Alive] Active 10-minute heartbeat configured for ${healthUrl}`);
 }
 
 const PORT = env.PORT;
@@ -253,9 +294,8 @@ const PORT = env.PORT;
 if (!process.env.VITEST) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Baxnaano Server] Listening on http://0.0.0.0:${PORT} (TZ: Africa/Mogadishu UTC+3)`);
-    // Warm up DB and start scheduler asynchronously in the background without blocking startup
     warmDatabaseConnection();
     startMidnightRolloverScheduler();
-    startRenderKeepAlivePing(PORT);
+    startRenderKeepAlivePing();
   });
 }

@@ -1,9 +1,9 @@
 /**
- * Baxnaano Centralized HTTP API Client
- * - Enforces a strict 10-second default timeout (AbortController) on all requests
- *   so cold starts or network drops never cause an endless loading spinner.
- * - Supports fast lightweight /health keep-alive and wake-up pings.
- * - Injects JWT Authorization and branch scope headers.
+ * Baxnaano Centralized Online-Only HTTP API Client
+ * - In-memory access token storage ONLY (never persisted to localStorage or sessionStorage).
+ * - HttpOnly SameSite=Strict refresh cookies with X-Requested-With CSRF protection header.
+ * - Enforces a strict 10-second default timeout (AbortController) on all requests.
+ * - Automatic one-time silent access-token refresh when a 15-minute JWT expires.
  */
 
 export const API_BASE =
@@ -18,24 +18,11 @@ export const SERVER_ROOT_URL = API_BASE.replace(/\/api\/?$/, '');
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-let inMemoryAccessToken: string | null =
-  typeof sessionStorage !== 'undefined'
-    ? sessionStorage.getItem('baxnaano_session_token')
-    : null;
+// Strictly in-memory access token (never written to localStorage or sessionStorage)
+let inMemoryAccessToken: string | null = null;
 
 export function setApiAccessToken(token: string | null): void {
   inMemoryAccessToken = token;
-  if (typeof sessionStorage !== 'undefined') {
-    try {
-      if (token) {
-        sessionStorage.setItem('baxnaano_session_token', token);
-      } else {
-        sessionStorage.removeItem('baxnaano_session_token');
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }
 }
 
 export function getApiAccessToken(): string | null {
@@ -69,10 +56,12 @@ export class ApiError extends Error {
 
 export interface ApiRequestOptions extends RequestInit {
   timeoutMs?: number;
+  _isRetryAfterRefresh?: boolean;
 }
 
 /**
- * Wrapper around fetch() that enforces a strict 10-second timeout by default.
+ * Wrapper around fetch() that enforces a strict 10-second timeout by default
+ * and includes the X-Requested-With CSRF protection header.
  */
 export async function fetchWithTimeout(
   url: string,
@@ -95,9 +84,15 @@ export async function fetchWithTimeout(
     controller.abort();
   }, timeoutMs);
 
+  const headers: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
   try {
     return await fetch(url, {
       ...options,
+      headers,
       signal: controller.signal,
     });
   } catch (err: any) {
@@ -155,6 +150,42 @@ export async function checkServerHealth(): Promise<boolean> {
   }
 }
 
+let activeRefreshPromise: Promise<string | null> | null = null;
+
+async function trySilentTokenRefresh(): Promise<string | null> {
+  if (activeRefreshPromise) return activeRefreshPromise;
+
+  activeRefreshPromise = (async () => {
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/auth/refresh`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        },
+        DEFAULT_REQUEST_TIMEOUT_MS
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data?.accessToken) {
+        setApiAccessToken(data.accessToken);
+        return data.accessToken as string;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      activeRefreshPromise = null;
+    }
+  })();
+
+  return activeRefreshPromise;
+}
+
 export async function apiRequest<T>(
   endpoint: string,
   options: ApiRequestOptions = {}
@@ -167,6 +198,7 @@ export async function apiRequest<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
     ...((options.headers as Record<string, string>) || {}),
   };
 
@@ -208,7 +240,15 @@ export async function apiRequest<T>(
     );
   }
 
-  if (response.status === 401) {
+  // Automatic silent refresh if the short-lived 15-minute access token expired
+  if (response.status === 401 && !options._isRetryAfterRefresh && !endpoint.includes('/auth/')) {
+    const newToken = await trySilentTokenRefresh();
+    if (newToken) {
+      return apiRequest<T>(endpoint, {
+        ...options,
+        _isRetryAfterRefresh: true,
+      });
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('baxnaano:auth-unauthorized'));
     }

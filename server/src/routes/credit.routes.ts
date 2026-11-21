@@ -11,6 +11,7 @@ import {
   CreateCustomerSchema,
   CreditRepaymentSchema,
   computeCustomerCreditAging,
+  hasPermission,
   normalizePaymentToUsd,
 } from '@baxnaano/shared';
 import { recordAuditLog } from '../utils/audit';
@@ -22,7 +23,6 @@ creditRouter.use(authenticateJWT);
 /**
  * GET /api/credit/customers
  * Returns branch customers with their live balance, credit limit, and FIFO aging buckets
- * (0-30 days, 31-60 days, 60+ days) + overdue alert flag.
  */
 creditRouter.get(
   '/customers',
@@ -82,7 +82,7 @@ creditRouter.get(
 
 /**
  * POST /api/credit/customers
- * Create or update a Customer & their Credit Limit
+ * Create or update a Customer & their Credit Limit (strictly prevents cross-branch IDOR & enforces credit:manage_limit)
  */
 creditRouter.post(
   '/customers',
@@ -97,6 +97,24 @@ creditRouter.post(
       }
 
       const data = parsed.data;
+      const existing = data.id
+        ? await prisma.customer.findUnique({ where: { id: data.id } })
+        : null;
+
+      if (existing && existing.branchId !== data.branchId) {
+        res.status(403).json({ error: 'CROSS_BRANCH_ACCESS_DENIED' });
+        return;
+      }
+
+      const canManageLimit = hasPermission(req.user!.role, 'credit:manage_limit');
+      const effectiveCreditLimit = existing
+        ? canManageLimit
+          ? data.creditLimitUsd
+          : Number(existing.creditLimitUsd)
+        : canManageLimit
+          ? data.creditLimitUsd
+          : Math.min(100, data.creditLimitUsd);
+
       const customer = await prisma.customer.upsert({
         where: { id: data.id || '00000000-0000-0000-0000-000000000000' },
         update: {
@@ -106,7 +124,7 @@ creditRouter.post(
           villageOrFarm: data.villageOrFarm ?? null,
           primarySpecies: data.primarySpecies as Species[],
           herdSizeEstimate: data.herdSizeEstimate ?? null,
-          creditLimitUsd: data.creditLimitUsd,
+          creditLimitUsd: effectiveCreditLimit,
           version: { increment: 1 },
         },
         create: {
@@ -118,9 +136,22 @@ creditRouter.post(
           villageOrFarm: data.villageOrFarm ?? null,
           primarySpecies: data.primarySpecies as Species[],
           herdSizeEstimate: data.herdSizeEstimate ?? null,
-          creditLimitUsd: data.creditLimitUsd,
+          creditLimitUsd: effectiveCreditLimit,
         },
       });
+
+      if (existing && Number(existing.creditLimitUsd) !== effectiveCreditLimit) {
+        await recordAuditLog({
+          branchId: customer.branchId,
+          userId: req.user!.id,
+          action: 'CUSTOMER_CREDIT_LIMIT_UPDATE',
+          entityType: 'Customer',
+          entityId: customer.id,
+          oldData: { creditLimitUsd: Number(existing.creditLimitUsd) },
+          newData: { creditLimitUsd: effectiveCreditLimit },
+          ipAddress: req.ip,
+        });
+      }
 
       res.status(201).json({ customer });
     } catch (error) {
@@ -132,8 +163,7 @@ creditRouter.post(
 
 /**
  * POST /api/credit/repayments
- * Records a full or partial customer credit repayment (Cash, EVC Plus, Zaad, eDahab)
- * in USD or SLSH, updates Customer.currentBalanceUsd, and writes Payment + CreditLedger entry.
+ * Records a full or partial customer credit repayment with branch-scoped IDOR & idempotency protection.
  */
 creditRouter.post(
   ['/repayments', '/payments'],
@@ -155,20 +185,25 @@ creditRouter.post(
       );
 
       const result = await prisma.$transaction(async (tx) => {
-        if (data.id) {
-          const existing = await tx.creditLedger.findUnique({ where: { id: data.id } });
-          if (existing) return { ledgerEntry: existing, idempotentReplay: true };
-        }
-
         const customer = await tx.customer.findFirst({
-          where: { id: data.customerId, deletedAt: null },
+          where: scopedWhere(req, { id: data.customerId }),
         });
 
         if (!customer) {
           throw new Error('CUSTOMER_NOT_FOUND');
         }
 
-        const effectiveBranchId = customer.branchId || data.branchId;
+        if (data.id) {
+          const existing = await tx.creditLedger.findUnique({ where: { id: data.id } });
+          if (existing) {
+            if (existing.branchId !== customer.branchId) {
+              throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+            }
+            return { ledgerEntry: existing, customer, idempotentReplay: true };
+          }
+        }
+
+        const effectiveBranchId = customer.branchId;
 
         const updatedCustomer = await tx.customer.update({
           where: { id: customer.id },
@@ -211,7 +246,7 @@ creditRouter.post(
       });
 
       await recordAuditLog({
-        branchId: data.branchId,
+        branchId: result.ledgerEntry.branchId,
         userId: req.user!.id,
         action: 'CREDIT_REPAYMENT',
         entityType: 'CreditLedger',
@@ -221,7 +256,16 @@ creditRouter.post(
       });
 
       res.status(201).json(result);
-    } catch (error) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'REPAYMENT_ERROR';
+      if (msg === 'CUSTOMER_NOT_FOUND') {
+        res.status(404).json({ error: msg });
+        return;
+      }
+      if (msg === 'CROSS_BRANCH_ACCESS_DENIED') {
+        res.status(403).json({ error: msg });
+        return;
+      }
       console.error('[Credit] Repayment error:', error);
       res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
     }
@@ -259,7 +303,6 @@ creditRouter.get(
 
 /**
  * GET /api/credit/customers/:id/statement
- * Returns full customer credit statement & aging breakdown for PDF print/export
  */
 creditRouter.get(
   '/customers/:id/statement',

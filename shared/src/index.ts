@@ -161,15 +161,12 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   ],
   VET_OFFICER: [
     'dashboard:view',
-    'reports:view',
-    'reports:export',
     'sales:create',
     'sales:view',
     'sales:void_request',
     'quotations:manage',
     'credit:view',
     'credit:payment',
-    'credit:manage_limit',
     'expenses:create',
     'expenses:view',
     'inventory:view',
@@ -181,7 +178,6 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     'prescriptions:manage',
     'treatments:manage',
     'tasks:manage',
-    'settings:manage',
   ],
 };
 

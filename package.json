@@ -2,7 +2,7 @@
   "name": "baxnaano-system",
   "version": "1.0.0",
   "private": true,
-  "description": "Baxnaano Pharmacy and Veterinary Clinic Management System - Offline-First Multi-Branch PWA",
+  "description": "Baxnaano Pharmacy and Veterinary Clinic Management System - Authoritative Online-Only Multi-Branch PWA",
   "workspaces": [
     "shared",
     "server",

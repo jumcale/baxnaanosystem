@@ -39,9 +39,10 @@ export async function recalculateBatchBalanceFromLedger(
 }
 
 /**
- * Appends a single StockMovement entry inside a Prisma transaction and updates
- * the batch's cachedQuantity from the true ledger sum.
- * Idempotent by movement `id` (if client retries same movement UUID across disconnects, returns existing).
+ * Appends a single StockMovement entry inside a Prisma transaction, acquires a
+ * row-level lock on the ProductBatch to prevent concurrent stock race conditions,
+ * and updates the batch's cachedQuantity from the true ledger sum.
+ * Strictly scopes idempotency by `branchId` to prevent cross-branch UUID collisions.
  */
 export async function appendStockMovement(
   tx: Prisma.TransactionClient,
@@ -62,10 +63,21 @@ export async function appendStockMovement(
   if (params.id) {
     const existing = await tx.stockMovement.findUnique({ where: { id: params.id } });
     if (existing) {
-      const currentQty = await recalculateBatchBalanceFromLedger(tx, params.branchId, params.batchId);
+      if (existing.branchId !== params.branchId) {
+        throw new Error('CROSS_BRANCH_ACCESS_DENIED');
+      }
+      const currentQty = await recalculateBatchBalanceFromLedger(
+        tx,
+        params.branchId,
+        params.batchId
+      );
       return { movement: existing, newBatchQuantity: currentQty, idempotentReplay: true };
     }
   }
+
+  // Acquire row-level FOR UPDATE lock on the target ProductBatch row inside the transaction
+  // so concurrent checkouts/adjustments on the same batch serialize cleanly.
+  await tx.$queryRaw`SELECT id FROM "ProductBatch" WHERE id = ${params.batchId} AND "branchId" = ${params.branchId} FOR UPDATE`;
 
   // Verify batch belongs to branch & product
   const batch = await tx.productBatch.findFirst({
@@ -120,7 +132,7 @@ export async function appendStockMovement(
 
 /**
  * Server-side FEFO (First Expiry, First Out) allocator for a Product in a Branch.
- * Queries all active batches and computes their true ledger quantities before running FEFO.
+ * Acquires row locks on candidate batches and computes their true ledger quantities before running FEFO.
  */
 export async function getProductFEFOAllocation(
   tx: Prisma.TransactionClient,
@@ -128,6 +140,9 @@ export async function getProductFEFOAllocation(
   productId: string,
   requestedQuantity: number
 ): Promise<FEFOAllocationResult> {
+  // Lock all candidate batches for this product in this branch during allocation
+  await tx.$queryRaw`SELECT id FROM "ProductBatch" WHERE "branchId" = ${branchId} AND "productId" = ${productId} AND "deletedAt" IS NULL FOR UPDATE`;
+
   const batches = await tx.productBatch.findMany({
     where: {
       branchId,

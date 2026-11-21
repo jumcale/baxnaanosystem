@@ -135,8 +135,10 @@ export const LoginPage: React.FC = () => {
       );
 
       if (res.ok) {
-        const updatedUser = { ...pendingResetUser.user, mustChangePassword: false };
-        login(pendingResetUser.token, updatedUser);
+        const body = await res.json().catch(() => ({}));
+        const updatedUser = body.user || { ...pendingResetUser.user, mustChangePassword: false };
+        const freshToken = body.accessToken || pendingResetUser.token;
+        login(freshToken, updatedUser);
         navigate('/');
         return;
       }

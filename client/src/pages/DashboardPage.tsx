@@ -20,9 +20,7 @@ import { BAXNAANO_BRANCHES } from '@baxnaano/shared';
 import { useAuth } from '../context/AuthContext';
 import { reportsApi, DashboardAnalyticsResponse } from '../api';
 
-const DASHBOARD_CACHE_PREFIX = 'baxnaano_dashboard_cache_v2_';
-
-function createInitialDashboardShell(activeBranchId: string): DashboardAnalyticsResponse {
+function createInitialDashboardShell(): DashboardAnalyticsResponse {
   const branches = Object.values(BAXNAANO_BRANCHES).map((b) => ({
     branchId: b.id,
     code: b.code,
@@ -34,17 +32,6 @@ function createInitialDashboardShell(activeBranchId: string): DashboardAnalytics
     monthProfitUsd: 0,
     monthNetProfitUsd: 0,
   }));
-
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const cached = localStorage.getItem(`${DASHBOARD_CACHE_PREFIX}${activeBranchId}`);
-      if (cached) {
-        return JSON.parse(cached) as DashboardAnalyticsResponse;
-      }
-    } catch {
-      // fallback to empty shell
-    }
-  }
 
   return {
     kpis: {
@@ -79,9 +66,9 @@ export const DashboardPage: React.FC = () => {
   const { user, activeBranchId, setActiveBranchId } = useAuth();
 
   const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
-  // Render dashboard shell immediately (from last known snapshot or zeroed shell) without blocking UI
+  // Render dashboard UI shell immediately in memory without storing business data in localStorage
   const [analytics, setAnalytics] = useState<DashboardAnalyticsResponse>(() =>
-    createInitialDashboardShell(activeBranchId)
+    createInitialDashboardShell()
   );
   const [isRefreshing, setIsRefreshing] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,16 +79,6 @@ export const DashboardPage: React.FC = () => {
       const data = await reportsApi.getDashboard(activeBranchId);
       setAnalytics(data);
       setError(null);
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(
-            `${DASHBOARD_CACHE_PREFIX}${activeBranchId}`,
-            JSON.stringify(data)
-          );
-        } catch {
-          // ignore storage quota errors
-        }
-      }
     } catch (err: any) {
       setError(
         err?.message ||
@@ -113,7 +90,6 @@ export const DashboardPage: React.FC = () => {
   }, [activeBranchId]);
 
   useEffect(() => {
-    setAnalytics(createInitialDashboardShell(activeBranchId));
     refresh();
 
     const timer = setInterval(refresh, 25_000);
