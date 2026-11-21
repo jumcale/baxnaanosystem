@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "prebuild": "npm run ensure-prisma",
     "build": "tsc",
-    "start": "node -e \"const fs=require('fs'),cp=require('child_process');if(fs.existsSync('./dist/index.js')){require('./dist/index.js')}else{cp.spawn('npx',['tsx','src/index.ts'],{stdio:'inherit'})}\"",
+    "start": "tsx src/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "node scripts/prisma.cjs migrate dev",
     "prisma:deploy": "node scripts/prisma.cjs migrate deploy",
